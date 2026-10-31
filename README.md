@@ -15,8 +15,14 @@ Runs on Windows, Linux and macOS. Pure terminal UI, no GUI dependencies.
 - In-book search with next/prev match jump
 - UTF-8 rendering with East-Asian wide-character aware line wrapping
 
-> EPUB, DOCX and PDF are stubs at the moment: they only print a message asking for
-> third-party libraries. TXT is the only fully working format.
+EPUB and DOCX are parsed natively (no third-party libraries beyond zlib):
+
+- EPUB: reads `META-INF/container.xml` → OPF → spine order, extracts `dc:title` / `dc:creator`,
+  and uses `toc.ncx` titles as chapter names
+- DOCX: reads `word/document.xml` paragraph by paragraph, plus `docProps/core.xml` metadata
+- Both go through a built-in minimal ZIP reader (stored / deflate)
+
+> PDF is still a stub: it only prints a message. Only TXT, EPUB and DOCX are fully supported.
 
 ### Fanqie novel download
 
@@ -63,7 +69,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-Add `-DENABLE_MUSIC=ON` for the music player, `-DEMBED_FANQIE=ON` for a single-file exe.
+Add `-DENABLE_MUSIC=ON` for the music player, `-DEMBED_FANQIE=ON` for a single-file exe,
+`-DSTATIC_LINK=ON` to link every third-party library statically (no DLLs needed).
 See [BUILD.md](BUILD.md) for all options.
 
 ## Usage

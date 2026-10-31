@@ -81,12 +81,14 @@
 | ENABLE_MUSIC | OFF | 是否编译音乐播放器 |
 | ENABLE_LOCAL_MUSIC_API | OFF | 是否接入本地网易云 API（需 ENABLE_MUSIC=ON） |
 | LOCAL_MUSIC_API_BASE | http://127.0.0.1:3000 | 本地 API 地址 |
+| STATIC_LINK | OFF | Windows 下把所有第三方库静态编入 exe，产物不依赖任何 DLL |
 
 ### 依赖关系
 
     ENABLE_LOCAL_MUSIC_API  ->  需要 ENABLE_MUSIC
     ENABLE_MUSIC            ->  需要 libcurl
     EMBED_FANQIE            ->  需要 tools/tomato/ 下有下载器源文件
+    STATIC_LINK             ->  需要 pkg-config 与 libcurl / zlib 的 .a 静态库
 
 依赖不满足时会警告并自动降级，不会导致编译失败。例如：
 
@@ -114,11 +116,47 @@
 | 全功能 | -DENABLE_MUSIC=ON -DENABLE_LOCAL_MUSIC_API=ON | 1.78 MB | 同上 |
 | 单文件（内嵌） | -DEMBED_FANQIE=ON | 11.63 MB | 无 |
 | 单文件 + 音乐 | -DEMBED_FANQIE=ON -DENABLE_MUSIC=ON | 约 12.7 MB | 无 |
+| 静态链接 | -DSTATIC_LINK=ON | 11.17 MB | 下载器 10.93 MB，无 DLL |
 
 说明：
 
 - 外置模式下 TomatoNovelDownloader.exe 会在编译后自动复制到输出目录
 - 内嵌模式下下载器打包进 exe，输出目录只有主程序
+- 动态链接（默认）时输出目录还需要 zlib1.dll、libcurl-4.dll 等 MSYS2 运行时；
+  加上 -DSTATIC_LINK=ON 后这些全部消失，只剩 Windows 系统 DLL
+
+---
+
+## 静态链接（Windows，无 DLL 依赖）
+
+默认构建会动态链接 MSYS2 的运行时，分发时除了 exe 还要带上：
+
+    zlib1.dll
+    libcurl-4.dll 及其依赖（libssl-3-x64.dll、libcrypto-3-x64.dll、
+    libssh2-1.dll、libnghttp2-14.dll、libngtcp2-16.dll、libnghttp3-9.dll、
+    libpsl-5.dll、libidn2-0.dll、libbrotlidec.dll、libbrotlicommon.dll、
+    libzstd.dll、libunistring-5.dll、libiconv-2.dll、
+    libgcc_s_seh-1.dll、libstdc++-6.dll、libwinpthread-1.dll）
+
+加 `-DSTATIC_LINK=ON` 后以上 DLL 全部不再需要，只依赖 Windows 自带的
+KERNEL32 / USER32 / WS2_32 / CRYPT32 等系统库。
+
+    cmake -S . -B build_static -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+          -DCMAKE_PREFIX_PATH=D:/devtools/msys64/ucrt64 -DSTATIC_LINK=ON
+    cmake --build build_static
+
+实现要点：
+
+| 项 | 做法 |
+|---|---|
+| 链接选项 | `-static -static-libgcc -static-libstdc++ -s` |
+| libcurl | 用 `pkg-config --libs --static libcurl` 取完整依赖链，再显式换成 `libcurl.a` 的绝对路径 |
+| 宏定义 | 追加 `-DCURL_STATICLIB`，否则头文件仍按 dllimport 声明 |
+| zlib | 绕过 `find_package(ZLIB)`（它会优先选 `libz.dll.a`），直接链接 `libz.a` |
+| 符号表 | `-s` 在链接期 strip，体积从约 15.4 MB 降到 11.2 MB |
+
+注意：静态链接会触发 GPL/LGPL 相关条款（libcurl、OpenSSL 等），
+如果打算分发二进制，请自行确认许可证兼容性。
 
 ---
 

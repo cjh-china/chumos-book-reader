@@ -124,8 +124,63 @@ endif()
 # 依赖：libcurl（在线搜索）、miniaudio（third_party/ 内置）、Windows winmm/ole32
 option(ENABLE_MUSIC "Enable built-in music player" OFF)
 
+# ==================== 静态链接 ====================
+# ON: 把 zlib / libcurl 及其依赖 / libstdc++ / libgcc / winpthread 全部静态编入 exe，
+#     产物不依赖任何第三方 DLL。代价是体积增大（约 +8 MB）。
+option(STATIC_LINK "Statically link all third-party libraries (no DLL dependencies)" OFF)
+
+if(STATIC_LINK AND WIN32)
+    find_program(PKG_CONFIG_EXE pkg-config)
+    if(NOT PKG_CONFIG_EXE)
+        message(FATAL_ERROR "STATIC_LINK requires pkg-config to resolve libcurl static deps")
+    endif()
+    # -s: 链接时直接 strip 符号表，静态版体积从约 15 MB 降到 11 MB
+    add_link_options(-static -static-libgcc -static-libstdc++ -s)
+    message(STATUS "Static linking: enabled (-static -static-libgcc -static-libstdc++ -s)")
+endif()
+
 # ==================== 可选 libcurl ====================
+if(STATIC_LINK AND WIN32)
+    # 静态模式下不依赖 CURL 的 CMake 配置，直接用 pkg-config 取全部静态依赖
+    execute_process(
+        COMMAND ${PKG_CONFIG_EXE} --libs --static libcurl
+        OUTPUT_VARIABLE CURL_STATIC_LIBS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    execute_process(
+        COMMAND ${PKG_CONFIG_EXE} --cflags libcurl
+        OUTPUT_VARIABLE CURL_STATIC_CFLAGS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT CURL_STATIC_LIBS)
+        message(FATAL_ERROR "pkg-config --libs --static libcurl returned nothing")
+    endif()
+    separate_arguments(CURL_STATIC_LIB_LIST UNIX_COMMAND "${CURL_STATIC_LIBS}")
+    # -LD:/... 形式的库路径要转成 CMake 的 link_directories
+    set(CURL_LINK_DIRS)
+    set(CURL_STATIC_LIBS_CLEAN)
+    foreach(arg ${CURL_STATIC_LIB_LIST})
+        if(arg MATCHES "^-L(.+)$")
+            list(APPEND CURL_LINK_DIRS "${CMAKE_MATCH_1}")
+        else()
+            list(APPEND CURL_STATIC_LIBS_CLEAN "${arg}")
+        endif()
+    endforeach()
+    link_directories(${CURL_LINK_DIRS})
+    # -lcurl 在 MinGW 下会优先选中 libcurl.dll.a（import lib），必须换成完整路径
+    find_library(CURL_STATIC_ARCHIVE NAMES libcurl.a curl)
+    if(NOT CURL_STATIC_ARCHIVE)
+        message(FATAL_ERROR "STATIC_LINK: libcurl.a not found")
+    endif()
+    list(INSERT CURL_STATIC_LIBS_CLEAN 0 "${CURL_STATIC_ARCHIVE}")
+    add_definitions(-DCURL_STATICLIB)
+    set(CURL_FOUND TRUE)
+    set(CURL_STATIC_MODE TRUE)
+    message(STATUS "libcurl: STATIC (${CURL_STATIC_ARCHIVE})")
+else()
 find_package(CURL)
+endif()
+
 if(CURL_FOUND)
     include_directories(${CURL_INCLUDE_DIRS})
     add_definitions(-DHAS_CURL)
@@ -166,6 +221,8 @@ set(SOURCES
     src/reader.cpp
     src/config.cpp
     src/parser_txt.cpp
+    src/zip_reader.cpp
+    src/markup_util.cpp
     src/encoding.cpp
     src/fs_util.cpp
     src/parser_epub.cpp
@@ -210,7 +267,53 @@ if(WIN32)
 endif()
 
 if(CURL_FOUND)
-    target_link_libraries(ebook_reader ${CURL_LIBRARIES})
+    if(CURL_STATIC_MODE)
+        target_link_libraries(ebook_reader ${CURL_STATIC_LIBS_CLEAN})
+    else()
+        target_link_libraries(ebook_reader ${CURL_LIBRARIES})
+    endif()
+endif()
+
+# ZIP 解压（EPUB / DOCX 解析所需）
+if(STATIC_LINK AND WIN32)
+    # 静态模式下不调用 find_package(ZLIB)，直接从工具链前缀目录找 libz.a
+    if(NOT ZLIB_STATIC_LIB)
+        find_library(ZLIB_STATIC_LIB NAMES libz.a zlibstatic)
+    endif()
+    if(NOT ZLIB_STATIC_INCLUDE)
+        find_path(ZLIB_STATIC_INCLUDE zlib.h)
+    endif()
+    if(NOT ZLIB_STATIC_LIB)
+        message(FATAL_ERROR "STATIC_LINK: libz.a not found")
+    endif()
+    include_directories(${ZLIB_STATIC_INCLUDE})
+    target_link_libraries(ebook_reader ${ZLIB_STATIC_LIB})
+    message(STATUS "zlib: STATIC (${ZLIB_STATIC_LIB})")
+else()
+    find_package(ZLIB REQUIRED)
+    include_directories(${ZLIB_INCLUDE_DIRS})
+    target_link_libraries(ebook_reader ${ZLIB_LIBRARIES})
+
+    # Windows 动态链接时需要把 zlib1.dll 放到 exe 同目录（FindZLIB 不提供 DLL 路径，自行推导）
+    if(WIN32)
+        get_filename_component(_ZLIB_LIB_DIR "${ZLIB_LIBRARY_RELEASE}" DIRECTORY)
+        get_filename_component(_ZLIB_PREFIX_DIR "${_ZLIB_LIB_DIR}" DIRECTORY)
+        find_file(ZLIB_DLL_FILE
+                  NAMES zlib1.dll zlib.dll z.dll
+                  PATHS "${_ZLIB_PREFIX_DIR}/bin" "${_ZLIB_LIB_DIR}"
+                  NO_DEFAULT_PATH)
+        if(ZLIB_DLL_FILE)
+            add_custom_command(TARGET ebook_reader POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${ZLIB_DLL_FILE}
+                        ${CMAKE_BINARY_DIR}/
+                COMMENT "Copying zlib runtime"
+            )
+            message(STATUS "zlib runtime: ${ZLIB_DLL_FILE}")
+        else()
+            message(STATUS "zlib runtime: not found (zlib1.dll must be on PATH)")
+        endif()
+    endif()
 endif()
 
 install(TARGETS ebook_reader DESTINATION bin)
@@ -256,7 +359,11 @@ if(CURL_FOUND)
         ${VERSION_RESOURCE}
         ${FANQIE_EMBED_RESOURCE}
     )
-    target_link_libraries(fanqie_test ${CURL_LIBRARIES})
+    if(CURL_STATIC_MODE)
+        target_link_libraries(fanqie_test ${CURL_STATIC_LIBS_CLEAN})
+    else()
+        target_link_libraries(fanqie_test ${CURL_LIBRARIES})
+    endif()
     if(WIN32)
         target_link_libraries(fanqie_test ws2_32)
     endif()

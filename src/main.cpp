@@ -81,7 +81,8 @@ static void printUsage(const char* prog) {
     std::cerr << "  " << prog << " <文件路径或URL>    直接打开" << std::endl;
     std::cerr << "  " << prog << " --fanqie           番茄小说下载" << std::endl;
     std::cerr << std::endl;
-    std::cerr << "支持格式: TXT(自动识别 UTF-8/UTF-16/GBK), EPUB, DOCX, PDF" << std::endl;
+    std::cerr << "支持格式: TXT(自动识别 UTF-8/UTF-16/GBK), EPUB, DOCX" << std::endl;
+    std::cerr << "PDF 尚未支持（仅给出提示）" << std::endl;
     std::cerr << "也支持 http:// 或 https:// 链接（需要 libcurl）" << std::endl;
     std::cerr << std::endl;
     std::cerr << "配置文件: 当前目录下的 ebook_reader.config.json" << std::endl;
