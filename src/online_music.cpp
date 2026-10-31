@@ -4,7 +4,6 @@
 #include "fs_util.h"
 #ifdef HAS_MUSIC
 #include "netease_api.h"
-#include "music.h"
 #endif
 
 #include <algorithm>
@@ -800,33 +799,6 @@ std::string OnlineMusicService::downloadSong(const OnlineSong& song,
     } else {
         warn += "该曲目没有封面; ";
     }
-
-    // 把歌词与封面合成进音频标签（MP3: USLT + APIC）
-    // 失败不影响音频本身，只在提示里追加原因
-#ifdef HAS_MUSIC
-    {
-        std::string lrcForTag;
-        // 优先复用本次写到磁盘的 .lrc，其次用搜索结果自带的歌词
-        std::string lrcPath = fsutil::join(dir, baseName + ".lrc");
-        if (fsutil::isFile(lrcPath)) {
-            fsutil::readAll(lrcPath, lrcForTag);
-        }
-        if (lrcForTag.empty()) lrcForTag = song.lyricText;
-
-        std::string coverData;
-        std::string coverPath = fsutil::join(dir, baseName + ".jpg");
-        if (fsutil::isFile(coverPath)) {
-            fsutil::readAll(coverPath, coverData);
-        }
-
-        if (!lrcForTag.empty() || !coverData.empty()) {
-            std::string tagErr;
-            if (!musiclib::embedMetadata(audioPath, lrcForTag, coverData, "", tagErr)) {
-                warn += "标签合成失败：" + tagErr + "; ";
-            }
-        }
-    }
-#endif
 
     // 下载成功但有元数据缺失时，通过 error 字段把提示带回界面
     if (!warn.empty()) error = warn;

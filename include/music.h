@@ -72,15 +72,6 @@ bool writeTags(const std::string& path,
                const std::string& album,
                std::string& error);
 
-// 把歌词与封面合成进音频文件标签。
-// MP3: 写 ID3v2.3 的 USLT（歌词）与 APIC（封面）
-// 传空字符串表示该项不写入。成功返回 true，失败时 error 给出原因。
-bool embedMetadata(const std::string& path,
-                   const std::string& lyrics,
-                   const std::string& coverData,
-                   const std::string& coverMime,
-                   std::string& error);
-
 }
 
 #endif
