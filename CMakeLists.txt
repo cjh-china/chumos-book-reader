@@ -330,11 +330,17 @@ if(ENABLE_MUSIC)
             src/playlist_store.cpp
             src/music_ui.cpp
             src/online_music.cpp
+            src/netease_api.cpp
         )
         if(WIN32)
             target_link_libraries(ebook_reader winmm ole32)
         endif()
-        message(STATUS "Music player enabled")
+
+        # 网易云 eapi 需要 AES-128-ECB + MD5
+        find_package(OpenSSL REQUIRED)
+        include_directories(${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(ebook_reader ${OPENSSL_CRYPTO_LIBRARY})
+        message(STATUS "Music player enabled (netease eapi via ${OPENSSL_CRYPTO_LIBRARY})")
     endif()
 endif()
 

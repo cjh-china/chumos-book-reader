@@ -11,7 +11,7 @@ struct OnlineSong {
     std::string artist;
     std::string album;
     double durationSec = 0;
-    std::string source;       // "audius" / "itunes"
+    std::string source;       // "netease" / "netease-local" / "myfreemp3" / "audius" / "itunes"
     std::string streamUrl;    // 直接可播放的地址（可能为空，需 resolve）
     std::string coverUrl;
     std::string lyricText;    // LRC 原文（可能为空）
@@ -49,8 +49,13 @@ public:
     // 本地 NeteaseCloudMusicApi 服务地址（编译期由 CMake 注入）
     static std::string localApiBase();
 
-    // 探测本地服务是否在线。
-    // 首次探测失败后本次运行内不再重试（避免每次都等 3 秒超时）
+    // 查找本机可用的 NeteaseCloudMusicApi 安装目录。
+    // 返回 main.js 所在目录；找不到返回空。
+    // 查找顺序：NETEASE_API_HOME 环境变量 → npm 全局目录 → exe 同级 tools/ → 常见路径
+    static std::string findLocalApiHome();
+
+    // 探测本地服务是否在线；不在线时尝试自动拉起（每个进程只试一次）
+    // 首次探测失败后本次运行内不再重试（避免每次都等超时）
     bool isLocalApiAvailable();
 
     // 用本地服务解析真实播放地址（绕过网易云版权限制）
@@ -62,6 +67,10 @@ public:
 
 private:
     std::string errMsg;
+    std::string lastError_;   // 供 resolveViaLocalApi / fetchLocalLyric 等辅助函数记录原因
+
+    // 原生 eapi 音源（C++ 直连 interface.music.163.com，不需要 Node）
+    std::vector<OnlineSong> searchNetease(const std::string& kw, int limit);
 
     std::vector<OnlineSong> searchAudius(const std::string& kw, int limit);
     std::vector<OnlineSong> searchITunes(const std::string& kw, int limit);
@@ -69,6 +78,9 @@ private:
 
 #ifdef HAS_LOCAL_MUSIC_API
     std::vector<OnlineSong> searchLocalApi(const std::string& kw, int limit);
+
+    // 后台启动 node main.js，最多等 waitSeconds 秒
+    static bool startLocalApi(const std::string& home, int waitSeconds);
 #endif
 };
 

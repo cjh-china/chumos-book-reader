@@ -79,14 +79,14 @@
 |---|---|---|
 | EMBED_FANQIE | OFF | 是否把番茄下载器内嵌进 exe |
 | ENABLE_MUSIC | OFF | 是否编译音乐播放器 |
-| ENABLE_LOCAL_MUSIC_API | OFF | 是否接入本地网易云 API（需 ENABLE_MUSIC=ON） |
+| ENABLE_LOCAL_MUSIC_API | OFF | 是否接入本地 NeteaseCloudMusicApi（需 ENABLE_MUSIC=ON） |
 | LOCAL_MUSIC_API_BASE | http://127.0.0.1:3000 | 本地 API 地址 |
 | STATIC_LINK | OFF | Windows 下把所有第三方库静态编入 exe，产物不依赖任何 DLL |
 
 ### 依赖关系
 
     ENABLE_LOCAL_MUSIC_API  ->  需要 ENABLE_MUSIC
-    ENABLE_MUSIC            ->  需要 libcurl
+    ENABLE_MUSIC            ->  需要 libcurl + OpenSSL（网易云 eapi 的 AES/MD5）
     EMBED_FANQIE            ->  需要 tools/tomato/ 下有下载器源文件
     STATIC_LINK             ->  需要 pkg-config 与 libcurl / zlib 的 .a 静态库
 
@@ -113,7 +113,7 @@
 |---|---|---|---|
 | 纯阅读器 | 无附加选项 | 0.69 MB | 下载器 10.93 MB |
 | 阅读器 + 音乐 | -DENABLE_MUSIC=ON | 1.77 MB | 同上 |
-| 全功能 | -DENABLE_MUSIC=ON -DENABLE_LOCAL_MUSIC_API=ON | 1.78 MB | 同上 |
+| 音乐 + 本地 API | -DENABLE_MUSIC=ON -DENABLE_LOCAL_MUSIC_API=ON | 约 2.0 MB | 同上 |
 | 单文件（内嵌） | -DEMBED_FANQIE=ON | 11.63 MB | 无 |
 | 单文件 + 音乐 | -DEMBED_FANQIE=ON -DENABLE_MUSIC=ON | 约 12.7 MB | 无 |
 | 静态链接 | -DSTATIC_LINK=ON | 11.17 MB | 下载器 10.93 MB，无 DLL |
@@ -351,9 +351,17 @@ Linux/macOS 需要自行下载对应平台的二进制放入上述目录，Windo
 
 ### 3. 行为说明
 
-- netease-local 作为首选音源，排在搜索结果最前
-- 服务离线时，首次探测 2 秒后本次运行不再重试，后续搜索无额外延迟
-- 服务不可用时自动降级到 myfreemp3 / Audius / iTunes
+- 音源顺序：netease（原生 eapi）→ netease-local → myfreemp3 → audius → itunes
+- netease 是纯 C++ 实现，不需要 Node，也不受本地服务状态影响
+- netease-local 在服务离线时会自动尝试拉起（`node app.js`），本进程只试一次
+- 安装目录自动查找顺序：
+  1. 环境变量 `NETEASE_API_HOME`
+  2. npm 全局目录 `%APPDATA%\npm\node_modules\NeteaseCloudMusicApi`
+  3. exe 同级 `NeteaseCloudMusicApi/` 或 `tools/NeteaseCloudMusicApi/`
+  4. 从 exe 目录向上 4 层找 `tools/NeteaseCloudMusicApi/`
+  5. `D:\NeteaseCloudMusicApi`、`C:\NeteaseCloudMusicApi`
+- 未安装 Node 或找不到目录时，该音源自动跳过，不影响其他三个音源
+- 成功拉起后，本次运行内不再重复探测
 
 ### 辅助脚本
 

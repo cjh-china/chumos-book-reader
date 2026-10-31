@@ -47,13 +47,25 @@ EPUB and DOCX are parsed natively (no third-party libraries beyond zlib):
 - Playlists, favorites, play history (persisted to `music_store.json`)
 - ID3v2.3 tag editing (title / artist / album)
 - Sleep timer: 15 / 30 / 60 minutes, or end-of-track
-- Online search across multiple sources: myfreemp3, Audius, iTunes
+- Online search across multiple sources: NetEase (native), myfreemp3, Audius, iTunes
 - Online download: audio + lyrics + cover, auto-indexed into library
+- Download reports which metadata failed (lyrics / cover) instead of silently skipping
+
+### NetEase cloud music (built in, no Node required)
+
+The NetEase source talks to `interface.music.163.com` directly over the `eapi`
+protocol, implemented natively in C++ (AES-128-ECB + MD5 via OpenSSL). No Node
+runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 
 ### Optional local music API (`-DENABLE_LOCAL_MUSIC_API=ON`)
 
 Connects to a locally running [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi)
-for full NetEase catalogue access, including songs the public CDN blocks.
+for the full NetEase catalogue, including songs the public CDN blocks.
+
+The install directory is auto-detected (env `NETEASE_API_HOME` → npm global
+`node_modules` → `tools/NeteaseCloudMusicApi` next to the exe). If the service is
+not running, it is started automatically via `node app.js`; if Node is missing the
+source is simply skipped and the other three sources still work.
 
 ## Documentation
 

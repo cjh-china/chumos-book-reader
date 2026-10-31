@@ -692,7 +692,12 @@ void MusicUI::doOnlineSearch() {
     int h = tui->getHeight();
     tui->clear();
     tui->drawText(2, 2, "在线搜索（回车搜索，留空取消）");
-    tui->drawText(3, 2, "音源: Audius（完整曲目） + iTunes（30秒试听）");
+    std::string srcList;
+    for (const auto& s : OnlineMusicService::availableSources()) {
+        if (!srcList.empty()) srcList += " + ";
+        srcList += s;
+    }
+    tui->drawText(3, 2, "音源: " + srcList);
     std::string kw = tui->promptInput(5, 2, "关键词: ", onlineQuery);
     if (kw.empty()) return;
 
@@ -814,7 +819,9 @@ void MusicUI::playOnlineSelected() {
 
     std::string url = online.resolveStream(s);
     if (url.empty()) {
-        showMessage("无法获取播放地址", 2000);
+        // 把底层原因（无版权 / 请求失败 / 网络错误）带给用户，而不是笼统一句"无法获取"
+        std::string why = online.lastError();
+        showMessage(why.empty() ? "无法获取播放地址" : why, 3000);
         return;
     }
 
@@ -834,7 +841,7 @@ void MusicUI::playOnlineSelected() {
     }
 
     // 播放失败（多半是无版权占位音频），自动尝试下一条同名结果
-    std::string firstErr = player->lastError();
+    std::string firstErr = "播放失败：" + player->lastError();
     std::string wantTitle = s.title;
 
     for (int i = 0; i < (int)onlineResults.size(); i++) {
@@ -879,7 +886,7 @@ void MusicUI::playOnlineSelected() {
         }
     }
 
-    showMessage(firstErr, 3000);
+    showMessage(firstErr, 4000);
 }
 
 void MusicUI::handleOnlineKey(int key) {
@@ -961,7 +968,23 @@ void MusicUI::downloadOnlineSelected() {
         tui->drawText(4, 2, truncateUtf8(fsutil::filename(path), w - 6));
         tui->drawText(6, 2, "保存位置:");
         tui->drawText(7, 2, truncateUtf8(OnlineMusicService::defaultDownloadDir(), w - 6));
-        tui->drawText(9, 2, "按 r 重新扫描曲库即可看到");
+
+        // err 非空表示音频已下载，但元数据（歌词/封面）有缺失或写入失败
+        int row = 9;
+        if (!err.empty()) {
+            tui->drawText(row++, 2, "元数据提示:");
+            std::string rest = err;
+            while (!rest.empty() && row < h - 2) {
+                size_t cut = rest.find(';');
+                std::string one = (cut == std::string::npos) ? rest : rest.substr(0, cut);
+                rest = (cut == std::string::npos) ? "" : rest.substr(cut + 1);
+                while (!one.empty() && one.front() == ' ') one.erase(one.begin());
+                if (one.empty()) continue;
+                tui->drawLine(row++, 4, "· " + truncateUtf8(one, w - 8), w - 8);
+            }
+            row++;
+        }
+        tui->drawText(row < h - 1 ? row : h - 2, 2, "按 r 重新扫描曲库即可看到");
     }
     tui->drawText(h - 1, 0, "  按任意键返回");
     tui->refresh();
