@@ -114,6 +114,9 @@
 | 纯阅读器 | 无附加选项 | 0.69 MB | 下载器 10.93 MB |
 | 阅读器 + 音乐 | -DENABLE_MUSIC=ON | 1.77 MB | 同上 |
 | 音乐 + 本地 API | -DENABLE_MUSIC=ON -DENABLE_LOCAL_MUSIC_API=ON | 约 2.0 MB | 同上 |
+
+在线下载的曲目会同时做两件事：把 .lrc/.jpg 存成同名旁挂文件，并把歌词与封面
+写入 MP3 自身的 ID3v2.3 标签（USLT / APIC），复制到别处也不会丢。
 | 单文件（内嵌） | -DEMBED_FANQIE=ON | 11.63 MB | 无 |
 | 单文件 + 音乐 | -DEMBED_FANQIE=ON -DENABLE_MUSIC=ON | 约 12.7 MB | 无 |
 | 静态链接 | -DSTATIC_LINK=ON | 11.17 MB | 下载器 10.93 MB，无 DLL |
