@@ -49,6 +49,8 @@ EPUB and DOCX are parsed natively (no third-party libraries beyond zlib):
 - Sleep timer: 15 / 30 / 60 minutes, or end-of-track
 - Online search across multiple sources: NetEase (native), myfreemp3, Audius, iTunes
 - Online download: audio + lyrics + cover, auto-indexed into library
+- Lyrics and cover are also embedded into the MP3 itself (ID3v2.3 USLT + APIC),
+  so they survive copying the file elsewhere
 - Download reports which metadata failed (lyrics / cover) instead of silently skipping
 
 ### NetEase cloud music (built in, no Node required)

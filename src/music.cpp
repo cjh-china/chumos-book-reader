@@ -425,6 +425,58 @@ std::string utf8ToUtf16le(const std::string& s) {
     return out;
 }
 
+// 构造 USLT（歌词）帧：编码 + 语言 + 内容描述 + 歌词
+std::string makeUsltFrame(const std::string& lyrics) {
+    std::string payload;
+    payload += (char)0x01;          // UTF-16 with BOM
+    payload += "chi";               // 语言
+    payload += (char)0xFF;          // 内容描述（空串，也要 BOM）
+    payload += (char)0xFE;
+    payload += (char)0x00;
+    payload += (char)0x00;          // 描述结束
+    payload += (char)0xFF;          // 歌词正文的 BOM
+    payload += (char)0xFE;
+    payload += utf8ToUtf16le(lyrics);
+
+    std::string frame;
+    frame.append("USLT", 4);
+    unsigned int sz = (unsigned int)payload.size();
+    frame += (char)((sz >> 24) & 0xFF);
+    frame += (char)((sz >> 16) & 0xFF);
+    frame += (char)((sz >> 8) & 0xFF);
+    frame += (char)(sz & 0xFF);
+    frame += (char)0;
+    frame += (char)0;
+    frame += payload;
+    return frame;
+}
+
+// 构造 APIC（封面）帧：编码 + MIME + 类型 + 描述 + 图片数据
+// 封面是二进制，统一用编码 0（ISO-8859-1）描述字段
+std::string makeApicFrame(const std::string& mime,
+                          const std::string& image,
+                          unsigned char picType = 0x03) {   // 0x03 = 封面正面
+    std::string payload;
+    payload += (char)0x00;          // 编码 0：描述字段按 Latin-1
+    payload += mime;
+    payload += (char)0x00;          // MIME 结束
+    payload += (char)picType;
+    payload += (char)0x00;          // 空描述，直接结束
+    payload += image;
+
+    std::string frame;
+    frame.append("APIC", 4);
+    unsigned int sz = (unsigned int)payload.size();
+    frame += (char)((sz >> 24) & 0xFF);
+    frame += (char)((sz >> 16) & 0xFF);
+    frame += (char)((sz >> 8) & 0xFF);
+    frame += (char)(sz & 0xFF);
+    frame += (char)0;
+    frame += (char)0;
+    frame += payload;
+    return frame;
+}
+
 // 构造一个文本帧（ID3v2.3，编码 1 = UTF-16 with BOM）
 std::string makeTextFrame(const char* id, const std::string& text) {
     std::string payload;
@@ -523,16 +575,16 @@ bool parseFrames(const std::string& file, size_t& audioStart,
 
 } // namespace
 
-bool musiclib::writeTags(const std::string& path,
-                         const std::string& title,
-                         const std::string& artist,
-                         const std::string& album,
-                         std::string& error) {
-    error.clear();
+namespace {
 
+// 用 newFrames 替换掉 dropIds 指定的帧，其余帧原样保留，重写整个 ID3v2 标签。
+bool rebuildId3(const std::string& path,
+                const std::vector<RawFrame>& newFrames,
+                const std::vector<std::string>& dropIds,
+                std::string& error) {
     std::string ext = fsutil::extension(path);
     if (ext != "mp3") {
-        error = "目前只支持 MP3 标签编辑（FLAC 待实现）";
+        error = "目前只支持 MP3 标签写入（FLAC 待实现）";
         return false;
     }
 
@@ -546,18 +598,13 @@ bool musiclib::writeTags(const std::string& path,
     std::vector<RawFrame> frames;
     parseFrames(file, audioStart, frames);
 
-    // 移除旧的这三个帧
+    // 移除被替换的旧帧
     frames.erase(std::remove_if(frames.begin(), frames.end(),
-        [](const RawFrame& f) {
-            return f.id == "TIT2" || f.id == "TPE1" || f.id == "TALB";
+        [&dropIds](const RawFrame& f) {
+            return std::find(dropIds.begin(), dropIds.end(), f.id) != dropIds.end();
         }), frames.end());
 
-    // 插入新帧（放最前面，常见做法）
-    std::vector<RawFrame> newFrames;
-    if (!title.empty()) newFrames.push_back({"TIT2", makeTextFrame("TIT2", title)});
-    if (!artist.empty()) newFrames.push_back({"TPE1", makeTextFrame("TPE1", artist)});
-    if (!album.empty()) newFrames.push_back({"TALB", makeTextFrame("TALB", album)});
-
+    // 新帧放最前面（常见做法）
     std::vector<RawFrame> finalFrames;
     finalFrames.insert(finalFrames.end(), newFrames.begin(), newFrames.end());
     finalFrames.insert(finalFrames.end(), frames.begin(), frames.end());
@@ -570,7 +617,7 @@ bool musiclib::writeTags(const std::string& path,
     const size_t PADDING = 1024;
 
     if (bodySize + PADDING > 0x0FFFFFFF) {
-        error = "标签过大";
+        error = "标签过大（超过 ID3v2 上限）";
         return false;
     }
 
@@ -590,14 +637,13 @@ bool musiclib::writeTags(const std::string& path,
     result += tag;
     result.append(file, audioStart, file.size() - audioStart);
 
-    // 原子写入
+    // 先写临时文件，再替换原文件（避免中途失败丢数据）
     std::string tmp = path + ".tagtmp";
     if (!fsutil::writeAll(tmp, result)) {
         error = "写入临时文件失败";
         return false;
     }
 
-    // 替换原文件
     if (!fsutil::removeFile(path)) {
         fsutil::removeFile(tmp);
         error = "无法替换原文件（可能被占用）";
@@ -606,9 +652,70 @@ bool musiclib::writeTags(const std::string& path,
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
+        fsutil::removeFile(tmp);
         error = "重命名失败: " + ec.message();
         return false;
     }
 
     return true;
+}
+
+} // namespace
+
+bool musiclib::writeTags(const std::string& path,
+                         const std::string& title,
+                         const std::string& artist,
+                         const std::string& album,
+                         std::string& error) {
+    error.clear();
+
+    std::vector<RawFrame> newFrames;
+    if (!title.empty()) newFrames.push_back({"TIT2", makeTextFrame("TIT2", title)});
+    if (!artist.empty()) newFrames.push_back({"TPE1", makeTextFrame("TPE1", artist)});
+    if (!album.empty()) newFrames.push_back({"TALB", makeTextFrame("TALB", album)});
+
+    return rebuildId3(path, newFrames, {"TIT2", "TPE1", "TALB"}, error);
+}
+
+bool musiclib::embedMetadata(const std::string& path,
+                             const std::string& lyrics,
+                             const std::string& coverData,
+                             const std::string& coverMime,
+                             std::string& error) {
+    error.clear();
+
+    if (lyrics.empty() && coverData.empty()) {
+        error = "没有可写入的元数据";
+        return false;
+    }
+
+    std::vector<RawFrame> newFrames;
+    std::vector<std::string> dropIds;
+
+    if (!lyrics.empty()) {
+        newFrames.push_back({"USLT", makeUsltFrame(lyrics)});
+        dropIds.push_back("USLT");
+        dropIds.push_back("ULT");    // v2.2 旧标识，一并清掉避免重复
+    }
+
+    if (!coverData.empty()) {
+        std::string mime = coverMime;
+        if (mime.empty()) {
+            // 按文件头猜 MIME
+            const unsigned char* d = (const unsigned char*)coverData.data();
+            if (coverData.size() >= 3 && d[0] == 0xFF && d[1] == 0xD8 && d[2] == 0xFF) {
+                mime = "image/jpeg";
+            } else if (coverData.size() >= 8 &&
+                       d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G') {
+                mime = "image/png";
+            } else {
+                mime = "image/jpeg";
+            }
+        }
+        newFrames.push_back({"APIC", makeApicFrame(mime, coverData)});
+        dropIds.push_back("APIC");
+        dropIds.push_back("PIC");
+    }
+
+    return rebuildId3(path, newFrames, dropIds, error);
 }
