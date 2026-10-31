@@ -17,6 +17,7 @@
 
 #ifdef HAS_CURL
 #include "fanqie_downloader.h"
+#include "fanqie_resource.h"
 #endif
 
 #ifdef HAS_CURL
@@ -155,6 +156,36 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+#ifdef HAS_CURL
+    // 启动时检查下载器更新（可在配置文件里关闭）
+    if (reader.config().autoUpdateDownloader()) {
+        FanqieDownloader dl(2);
+        if (!fanqie_res::locateDownloader().empty()) {
+            int hh = tui.getHeight();
+            tui.clear();
+            tui.drawText(2, 2, "正在检查番茄下载器更新...");
+            tui.drawText(4, 2, "（首次可能需几秒，可在配置中关闭）");
+            tui.refresh();
+
+            std::string out;
+            if (dl.selfUpdate(true, out)) {
+                // 输出里含 "already" / "latest" 视为无更新
+                bool hasUpdate = out.find("Downloading") != std::string::npos ||
+                                 out.find("Updated") != std::string::npos ||
+                                 out.find("installed") != std::string::npos;
+                if (hasUpdate) {
+                    tui.clear();
+                    tui.drawText(2, 2, "番茄下载器已更新，请重启程序");
+                    tui.drawText(4, 2, "版本: " + dl.downloaderVersion());
+                    tui.drawText(hh - 1, 0, "  按任意键继续");
+                    tui.refresh();
+                    tui.getKey();
+                }
+            }
+        }
+    }
+#endif
+
     std::string target = arg;
 
     // 命令行直接指定了文件：先读它，退出阅读后仍回到书库
@@ -241,6 +272,34 @@ int main(int argc, char* argv[]) {
             tui.getKey();
             continue;
         }
+
+#ifdef HAS_CURL
+        // 打开番茄来源的书时，自动检查是否有新章节
+        if (reader.config().autoUpdateBooks()) {
+            std::string bookId = reader.config().bookSource(pick);
+            if (!bookId.empty() && fanqie_res::isAvailable()) {
+                tui.clear();
+                tui.drawText(2, 2, "正在检查更新...");
+                tui.drawLine(3, 2, pick, w - 4);
+                tui.refresh();
+
+                FanqieDownloader dl(2);
+                // 书名从文件名推
+                std::string bookName = fsutil::stem(pick);
+                int added = dl.updateBook(bookId, bookName, fsutil::parent(pick));
+
+                if (added > 0) {
+                    tui.clear();
+                    tui.drawText(2, 2, "发现 " + std::to_string(added) + " 个新章节");
+                    tui.drawText(4, 2, "已更新，正在重新加载...");
+                    tui.refresh();
+
+                    // 重新读取更新后的文件
+                    reader.loadBook(pick);
+                }
+            }
+        }
+#endif
 
         reader.run(false);
     }

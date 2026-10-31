@@ -331,6 +331,34 @@ tools/ 下提供两个启动脚本：
 
 ---
 
+
+### 自动更新
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `auto_update.books` | `true` | 打开番茄来源的书时，自动检查并下载新章节 |
+| `auto_update.downloader` | `true` | 启动时检查 TomatoNovelDownloader 是否有新版本 |
+
+**界面切换**：书库界面按 `U` 打开设置面板，方向键选择，空格/回车切换。
+
+**手动修改**：编辑 exe 同目录的 `ebook_reader.config.json`：
+
+```json
+{
+  "auto_update": {
+    "books": true,
+    "downloader": true
+  },
+  "book_sources": {
+    "D:\\books\\某本书.txt": "7603858201947163710"
+  }
+}
+```
+
+`book_sources` 记录 txt 文件与番茄 book_id 的对应关系，由程序在下载时自动写入，无需手动维护。
+
+---
+
 ## 运行时目录
 
 程序在 exe 同级创建以下目录：

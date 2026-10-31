@@ -65,6 +65,18 @@ public:
     // 把书名清洗成合法文件名（替换非法字符）
     static std::string sanitizeName(const std::string& name);
 
+    // 更新已下载的书（增量）。返回新增章节数；-1 表示失败。
+    // 会重新拉取目录，只下载缺失的章节，然后重新合并导出 txt。
+    int updateBook(const std::string& bookId, const std::string& bookName,
+                   const std::string& saveDir);
+
+    // 检查下载器自身是否有新版本（调用 exe --self-update）
+    // dryRun=true 时只检查不更新。返回 true 表示已执行（不代表有新版本）。
+    bool selfUpdate(bool autoConfirm, std::string& output);
+
+    // 下载器当前版本号（如 "2.4.16"）；失败返回空
+    std::string downloaderVersion();
+
 private:
     std::string httpGet(const std::string& path, const std::string& query);
     std::string httpPostJson(const std::string& path, const std::string& jsonBody);

@@ -82,6 +82,7 @@ See [BUILD.md](BUILD.md) for all options.
 | `M` | Music player (if built with `ENABLE_MUSIC`) |
 | `a` / `d` | Add / remove library folder |
 | `r` | Rescan |
+| `U` | Settings (auto-update toggles) |
 | `q` | Quit |
 
 ### Reader

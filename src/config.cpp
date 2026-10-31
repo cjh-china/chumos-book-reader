@@ -106,6 +106,27 @@ bool Config::load(const std::string& dir) {
     lastCursorOffset_ = (int)root["last_cursor_offset"].asNumber();
     sortMode_ = (int)root["sort_mode"].asNumber();
 
+    // 自动更新开关（缺省视为开启）
+    const minijson::Value& au = root["auto_update"];
+    if (au.type == minijson::Value::Object) {
+        autoUpdateBooks_ = au["books"].type == minijson::Value::Null
+                           ? true : au["books"].asBool();
+        autoUpdateDownloader_ = au["downloader"].type == minijson::Value::Null
+                                ? true : au["downloader"].asBool();
+    }
+
+    // 书籍来源映射
+    bookSources.clear();
+    const minijson::Value& src = root["book_sources"];
+    if (src.type == minijson::Value::Object) {
+        for (const auto& kv : src.obj) {
+            std::string id = kv.second.toStringValue();
+            if (!kv.first.empty() && !id.empty()) {
+                bookSources.emplace_back(kv.first, id);
+            }
+        }
+    }
+
     return true;
 }
 
@@ -137,7 +158,21 @@ bool Config::save() {
 
     os += "  \"last_cursor\": \"" + jsonEscape(lastCursorPath) + "\",\n";
     os += "  \"last_cursor_offset\": " + std::to_string(lastCursorOffset_) + ",\n";
-    os += "  \"sort_mode\": " + std::to_string(sortMode_) + "\n";
+    os += "  \"sort_mode\": " + std::to_string(sortMode_) + ",\n";
+
+    os += "  \"auto_update\": {\n";
+    os += "    \"books\": " + std::string(autoUpdateBooks_ ? "true" : "false") + ",\n";
+    os += "    \"downloader\": " + std::string(autoUpdateDownloader_ ? "true" : "false") + "\n";
+    os += "  },\n";
+
+    os += "  \"book_sources\": {\n";
+    for (size_t i = 0; i < bookSources.size(); i++) {
+        os += "    \"" + jsonEscape(bookSources[i].first) + "\": \"" +
+              jsonEscape(bookSources[i].second) + "\"";
+        if (i + 1 < bookSources.size()) os += ",";
+        os += "\n";
+    }
+    os += "  }\n";
     os += "}\n";
 
     return fsutil::writeAllAtomic(configFilePath, os);
@@ -186,4 +221,31 @@ bool Config::removeLibraryDir(const std::string& dir) {
 bool Config::hasLibraryDir(const std::string& dir) const {
     std::string full = fsutil::normalize(dir);
     return std::find(libraryDirs.begin(), libraryDirs.end(), full) != libraryDirs.end();
+}
+
+void Config::setBookSource(const std::string& filePath, const std::string& bookId) {
+    if (filePath.empty() || bookId.empty()) return;
+
+    std::string full = fsutil::normalize(filePath);
+
+    for (auto& kv : bookSources) {
+        if (kv.first == full) {
+            if (kv.second == bookId) return;
+            kv.second = bookId;
+            save();
+            return;
+        }
+    }
+
+    bookSources.emplace_back(full, bookId);
+    save();
+}
+
+std::string Config::bookSource(const std::string& filePath) const {
+    if (filePath.empty()) return "";
+    std::string full = fsutil::normalize(filePath);
+    for (const auto& kv : bookSources) {
+        if (kv.first == full) return kv.second;
+    }
+    return "";
 }

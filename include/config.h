@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 #include <string>
+#include <utility>
 #include <vector>
 
 struct RecentFile {
@@ -39,6 +40,18 @@ public:
     int sortMode() const { return sortMode_; }
     void setSortMode(int m) { sortMode_ = m; save(); }
 
+    // 打开番茄书籍时是否自动检查更新（默认开启）
+    bool autoUpdateBooks() const { return autoUpdateBooks_; }
+    void setAutoUpdateBooks(bool on) { autoUpdateBooks_ = on; save(); }
+
+    // 启动时是否检查下载器更新（默认开启）
+    bool autoUpdateDownloader() const { return autoUpdateDownloader_; }
+    void setAutoUpdateDownloader(bool on) { autoUpdateDownloader_ = on; save(); }
+
+    // 记录某本书的番茄 book_id（用于后续更新）
+    void setBookSource(const std::string& filePath, const std::string& bookId);
+    std::string bookSource(const std::string& filePath) const;
+
     static bool isBookFile(const std::string& path);
     static std::vector<std::string> scanDir(const std::string& dir, int maxDepth = 4);
 
@@ -49,6 +62,11 @@ private:
     std::string lastCursorPath;
     int lastCursorOffset_ = 0;
     int sortMode_ = 0;
+    bool autoUpdateBooks_ = true;
+    bool autoUpdateDownloader_ = true;
+
+    // 文件路径 → 番茄 book_id 映射
+    std::vector<std::pair<std::string, std::string>> bookSources;
 };
 
 #endif

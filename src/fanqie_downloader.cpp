@@ -513,3 +513,233 @@ std::string FanqieDownloader::formatMetaHeader(const BookMeta& meta) {
     out += "\n";
     return out;
 }
+
+// ==================== 增量更新 ====================
+
+int FanqieDownloader::updateBook(const std::string& bookId, const std::string& bookName,
+                                  const std::string& saveDir) {
+    if (!ensureService()) return -1;
+
+    // 记录更新前的章节数
+    std::string jsonlPath = fsutil::join(fsutil::join(toolDir, sanitizeName(bookId)),
+                                          "downloaded_chapters.jsonl");
+    int before = 0;
+    {
+        std::string data;
+        if (fsutil::readAll(jsonlPath, data)) {
+            std::istringstream in(data);
+            std::string line;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty()) before++;
+            }
+        }
+    }
+
+    // 触发一次下载任务（服务端会跳过已下载的章节）
+    std::ostringstream body;
+    body << "{\"book_id\":\"" << bookId << "\"}";
+
+    std::string resp = httpPostJson("/api/jobs", body.str());
+    if (resp.empty()) return -1;
+
+    minijson::Value job = minijson::parse(resp);
+    std::string jobId = job["id"].toStringValue();
+    if (jobId.empty()) return -1;
+
+    std::string state;
+    for (int i = 0; i < 600; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::string s = httpGet("/api/jobs", "id=" + jobId);
+        if (s.empty()) continue;
+        minijson::Value sr = minijson::parse(s);
+        const minijson::Value& items = sr["items"];
+        if (items.size() == 0) continue;
+        state = items[0]["state"].toStringValue();
+        if (state == "done") break;
+        if (state == "failed" || state == "cancelled") return -1;
+    }
+    if (state != "done") return -1;
+
+    // 统计更新后的章节数
+    int after = before;
+    {
+        std::string data;
+        if (fsutil::readAll(jsonlPath, data)) {
+            after = 0;
+            std::istringstream in(data);
+            std::string line;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty()) after++;
+            }
+        }
+    }
+
+    int added = after - before;
+
+    // 有新增章节时重新导出 txt
+    if (added > 0) {
+        std::string body = readChaptersJsonl(bookId, -1);
+        if (!body.empty()) {
+            BookMeta meta = fetchBookMeta(bookId);
+            if (!meta.valid) {
+                meta.name = bookName;
+                meta.valid = !bookName.empty();
+            }
+            std::string text = formatMetaHeader(meta) + body;
+
+            std::string outDir = saveDir.empty() ? defaultSaveDir : saveDir;
+            fsutil::createDirs(outDir);
+
+            std::string useName = meta.valid && !meta.name.empty() ? meta.name : bookName;
+            std::string outPath = fsutil::join(outDir, sanitizeName(useName) + ".txt");
+            fsutil::writeAllAtomic(outPath, text);
+        }
+    }
+
+    return added;
+}
+
+// ==================== 下载器自更新 ====================
+
+bool FanqieDownloader::selfUpdate(bool autoConfirm, std::string& output) {
+    output.clear();
+
+    std::string exe = locateExe();
+    if (exe.empty()) {
+        output = "未找到下载器";
+        return false;
+    }
+
+#ifdef _WIN32
+    std::string args = autoConfirm ? "--self-update --self-update-yes" : "--self-update";
+    std::string cmdLine = "\"" + exe + "\" " + args;
+    std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
+    cmdBuf.push_back('\0');
+
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE rdPipe = NULL, wrPipe = NULL;
+    if (!CreatePipe(&rdPipe, &wrPipe, &sa, 0)) {
+        output = "创建管道失败";
+        return false;
+    }
+    SetHandleInformation(rdPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = wrPipe;
+    si.hStdError = wrPipe;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+
+    std::string workDir = fsutil::parent(exe);
+
+    BOOL ok = CreateProcessA(
+        exe.c_str(), cmdBuf.data(), NULL, NULL, TRUE,
+        CREATE_NO_WINDOW, NULL, workDir.c_str(), &si, &pi);
+
+    CloseHandle(wrPipe);
+
+    if (!ok) {
+        CloseHandle(rdPipe);
+        output = "启动更新进程失败";
+        return false;
+    }
+
+    // 读取输出
+    char buf[4096];
+    DWORD got = 0;
+    while (ReadFile(rdPipe, buf, sizeof(buf) - 1, &got, NULL) && got > 0) {
+        buf[got] = '\0';
+        output += buf;
+    }
+
+    WaitForSingleObject(pi.hProcess, 120000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(rdPipe);
+    return true;
+#else
+    (void)autoConfirm;
+    output = "自更新仅支持 Windows";
+    return false;
+#endif
+}
+
+std::string FanqieDownloader::downloaderVersion() {
+    std::string exe = locateExe();
+    if (exe.empty()) return "";
+
+#ifdef _WIN32
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE rdPipe = NULL, wrPipe = NULL;
+    if (!CreatePipe(&rdPipe, &wrPipe, &sa, 0)) return "";
+    SetHandleInformation(rdPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = wrPipe;
+    si.hStdError = wrPipe;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+
+    std::string cmdLine = "\"" + exe + "\" --version";
+    std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
+    cmdBuf.push_back('\0');
+    std::string workDir = fsutil::parent(exe);
+
+    BOOL ok = CreateProcessA(
+        exe.c_str(), cmdBuf.data(), NULL, NULL, TRUE,
+        CREATE_NO_WINDOW, NULL, workDir.c_str(), &si, &pi);
+
+    CloseHandle(wrPipe);
+    if (!ok) {
+        CloseHandle(rdPipe);
+        return "";
+    }
+
+    std::string out;
+    char buf[1024];
+    DWORD got = 0;
+    while (ReadFile(rdPipe, buf, sizeof(buf) - 1, &got, NULL) && got > 0) {
+        buf[got] = '\0';
+        out += buf;
+    }
+
+    WaitForSingleObject(pi.hProcess, 10000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(rdPipe);
+
+    // 从 "Tomato Novel Downloader v2.4.16" 中提取版本号
+    size_t vpos = out.find(" v");
+    if (vpos != std::string::npos) {
+        size_t start = vpos + 2;
+        size_t end = out.find_first_of(" \r\n", start);
+        if (end == std::string::npos) end = out.size();
+        return out.substr(start, end - start);
+    }
+    return "";
+#else
+    return "";
+#endif
+}

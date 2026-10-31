@@ -703,6 +703,11 @@ void Reader::searchFanqie() {
                     okCount++;
                     okIndices.push_back(targets[t]);
                     libraryDirty = true;
+
+                    // 记录来源，供后续自动更新
+                    std::string savedPath = fsutil::join(dl.saveDir(),
+                                                FanqieDownloader::sanitizeName(b.book_name) + ".txt");
+                    cfg.setBookSource(savedPath, b.book_id);
                 } else {
                     failCount++;
                     failedNames.push_back(b.book_name);
@@ -737,7 +742,12 @@ void Reader::searchFanqie() {
             tui->drawText(2, 2, "下载《" + b.book_name + "》中，请稍候...");
             tui->refresh();
             bool ok = dl.downloadBook(b.book_id, b.book_name, "", -1);
-            if (ok) libraryDirty = true;
+            if (ok) {
+                libraryDirty = true;
+                std::string savedPath = fsutil::join(dl.saveDir(),
+                                            FanqieDownloader::sanitizeName(b.book_name) + ".txt");
+                cfg.setBookSource(savedPath, b.book_id);
+            }
             tui->drawText(5, 2, ok ? "下载完成，按任意键返回" : "下载失败，按任意键返回");
             tui->drawText(6, 2, "保存位置: " + downloadDir());
             tui->refresh();
@@ -1044,6 +1054,7 @@ int Reader::openBookPicker(const std::string& title, const std::vector<LibraryEn
 #ifdef HAS_MUSIC
             if (key == 'M') return -7;
 #endif
+            if (key == 'U') return -8;
             if (key == 8 || key == 127) {
                 if (!filter.empty()) {
                     while (!filter.empty() && ((unsigned char)filter.back() & 0xC0) == 0x80) filter.pop_back();
@@ -1128,7 +1139,7 @@ int Reader::openBookPicker(const std::string& title, const std::vector<LibraryEn
 #ifdef HAS_MUSIC
         status += "M 音乐 | ";
 #endif
-        status += "a 添加 | d 移除 | r 刷新 | q 退出";
+        status += "a 添加 | d 移除 | r 刷新 | U 设置 | q 退出";
         tui->drawLine(height - 1, 0, status, width - 1);
         tui->refresh();
 
@@ -1180,6 +1191,7 @@ int Reader::openBookPicker(const std::string& title, const std::vector<LibraryEn
 #ifdef HAS_MUSIC
         if (key == 'M') return -7;
 #endif
+        if (key == 'U') return -8;
         if (key == 8 || key == 127) {
             if (!filter.empty()) {
                 while (!filter.empty() && ((unsigned char)filter.back() & 0xC0) == 0x80) filter.pop_back();
@@ -1309,6 +1321,11 @@ std::string Reader::showLibrary() {
             return "";
         }
 #endif
+        if (rc == -8) {
+            showSettings();
+            libraryDirty = true;
+            continue;
+        }
         if (rc >= 0 && rc < (int)libEntries.size()) {
             libraryDirty = true;   // 下次进书库重新扫描，反映新增文件
             return libEntries[rc].path;
@@ -1453,6 +1470,7 @@ std::string Reader::tryFanqieFallback(const std::string& filePath) {
                                        FanqieDownloader::sanitizeName(hit->book_name) + ".txt");
     if (!dl.downloadBook(hit->book_id, hit->book_name, "", -1)) return "";
     if (!fsutil::isFile(outPath)) return "";
+    cfg.setBookSource(outPath, hit->book_id);
     return outPath;
 }
 #endif
@@ -1479,4 +1497,79 @@ bool Reader::loadBookOrRecover(const std::string& path, std::string& failReason)
 
     failReason = "文件存在但无法解析";
     return false;
+}
+
+// ==================== 设置面板 ====================
+
+void Reader::showSettings() {
+    int sel = 0;
+    const int ITEM_COUNT = 2;
+
+    while (true) {
+        int h = tui->getHeight();
+        int w = tui->getWidth();
+
+        tui->clear();
+        tui->drawText(0, 0, std::string(w, ' '));
+        tui->drawLine(0, 0, " 设置", w - 1);
+
+        auto drawItem = [&](int row, int idx, const char* label, bool value) {
+            bool isSel = (idx == sel);
+            std::string mark = isSel ? "> " : "  ";
+            std::string line = mark + label;
+            // 右侧对齐 [开] / [关]
+            std::string state = value ? "[开]" : "[关]";
+            int pad = w - (int)line.size() - (int)state.size() - 2;
+            if (pad > 0) line += std::string((size_t)pad, ' ');
+            line += state;
+
+            tui->drawText(row, 0, std::string(w, ' '));
+            tui->drawLine(row, 1, line, w - 2);
+        };
+
+        drawItem(3, 0, "打开番茄书时检查更新", cfg.autoUpdateBooks());
+        drawItem(5, 1, "启动时检查下载器更新", cfg.autoUpdateDownloader());
+
+        // 说明
+        tui->drawText(8, 2, "说明：");
+        tui->drawText(9, 4, "· 开启后，打开番茄来源的书会自动拉取新章节");
+        tui->drawText(10, 4, "· 下载器更新会在启动时检查，有新版才提示");
+        tui->drawText(11, 4, "· 设置保存在 ebook_reader.config.json");
+
+        tui->drawText(h - 1, 0, std::string(w, ' '));
+        tui->drawText(h - 1, 0, "  ↑↓ 选择 | 空格/回车 切换 | q/Esc 返回");
+
+        tui->refresh();
+
+        int key = -1;
+        while (key == -1) {
+            key = tui->getKey();
+            if (key == -1) {
+#ifdef PLATFORM_WINDOWS
+                Sleep(15);
+#else
+                napms(15);
+#endif
+            }
+        }
+
+        if (key == 'q' || key == 'Q' || key == 27) return;
+
+#ifdef PLATFORM_WINDOWS
+        if (key == 1000) { if (sel > 0) sel--; continue; }
+        if (key == 1001) { if (sel + 1 < ITEM_COUNT) sel++; continue; }
+#else
+        if (key == KEY_UP) { if (sel > 0) sel--; continue; }
+        if (key == KEY_DOWN) { if (sel + 1 < ITEM_COUNT) sel++; continue; }
+#endif
+
+        if (key == ' ' || key == 13 || key == 10) {
+            if (sel == 0) {
+                cfg.setAutoUpdateBooks(!cfg.autoUpdateBooks());
+            } else if (sel == 1) {
+                cfg.setAutoUpdateDownloader(!cfg.autoUpdateDownloader());
+            }
+            continue;
+        }
+    }
 }

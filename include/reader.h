@@ -93,6 +93,7 @@ private:
 
     static std::string downloadDir();
     void rebuildLibrary();
+    void showSettings();
 
     // 从文件名提取书名（去掉站点标记、序号、扩展名等）
     static std::string extractBookTitle(const std::string& filePath);
