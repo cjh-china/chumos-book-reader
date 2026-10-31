@@ -134,6 +134,7 @@ if(CURL_FOUND)
         src/site_parser.cpp
         src/fanqie_downloader.cpp
         src/fanqie_resource.cpp
+        src/sonovel.cpp
     )
 else()
     set(NET_SOURCES)

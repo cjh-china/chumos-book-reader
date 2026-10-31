@@ -31,3 +31,29 @@ sudo apt-get install libcurl4-openssl-dev
 ```bash
 brew install curl
 ```
+
+## so-novel 书源（推荐）
+
+项目已集成 [so-novel](https://github.com/freeok/so-novel) 的本地 WebUI，可在 17 个公开书源间聚合搜索并下载 TXT。
+
+**准备：**
+
+1. 下载 so-novel Windows 版（`sonovel.exe` + `app.jar` + `runtime/`），放到例如 `D:\sonovel-windows`
+2. 编辑其 `config.ini`，在 `[web]` 段设置 `enabled = 1`
+3. 无需手动启动 —— 阅读器会自动拉起（可在设置里关闭）
+
+**服务地址：** `http://127.0.0.1:7765`，可用环境变量 `SONOVEL_API_BASE` 覆盖。
+
+**使用：**
+
+- 书库 → `/` → `3`，或在阅读界面按 `/` → `3`
+- 聚合搜索较慢（10~30 秒），回车下载，章节多的书需要几分钟
+- 下载完成后自动复制到 `downloads/` 并直接打开阅读
+
+**查找 sonovel.exe 的顺序：**
+
+1. 设置面板（书库按 `U`）里填写的安装目录
+2. 环境变量 `SONOVEL_HOME`
+3. 程序同目录及其 `sonovel/`、`tools/`、`tools/sonovel/`
+4. 从程序目录向上 4 层找 `sonovel-windows/`、`tools/sonovel/`
+5. `D:\sonovel-windows`、`C:\sonovel-windows`

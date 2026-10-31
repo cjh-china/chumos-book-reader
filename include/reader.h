@@ -8,6 +8,7 @@
 
 #ifdef HAS_CURL
 #include "fanqie_downloader.h"
+#include "sonovel.h"
 #endif
 
 struct Book {
@@ -77,6 +78,7 @@ private:
     void openSearchMenu();
     void searchInBook();
     void searchFanqie();
+    void searchSoNovel();
     void loadTextAsBook(const std::string& text, const std::string& title);
 
     // 书库相关

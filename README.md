@@ -25,6 +25,13 @@ Runs on Windows, Linux and macOS. Pure terminal UI, no GUI dependencies.
 - Missing files are re-downloaded automatically when opened (if a same-title book exists)
 - Uses the bundled [Tomato-Novel-Downloader](https://github.com/zhongbai2333/Tomato-Novel-Downloader)
 
+### so-novel book sources
+
+- Aggregate search across 17 web novel sources via a local [so-novel](https://github.com/freeok/so-novel) WebUI
+- Auto-starts `sonovel.exe` when the service is not running (configurable)
+- Download to text, copied into `downloads/` and opened immediately
+- Install directory is auto-detected, or set it in Settings (`U`)
+
 ### Music player (optional, `-DENABLE_MUSIC=ON`)
 
 - Local library: MP3 / FLAC / WAV / OGG with ID3v2 and FLAC Vorbis Comment tag reading
@@ -82,7 +89,7 @@ See [BUILD.md](BUILD.md) for all options.
 | `M` | Music player (if built with `ENABLE_MUSIC`) |
 | `a` / `d` | Add / remove library folder |
 | `r` | Rescan |
-| `U` | Settings (auto-update toggles) |
+| `U` | Settings (auto-update + so-novel) |
 | `q` | Quit |
 
 ### Reader
@@ -93,7 +100,7 @@ See [BUILD.md](BUILD.md) for all options.
 | Down / Up, j / k | Scroll one line |
 | g / G | First / last page |
 | `t` | Table of contents |
-| `/` | Search menu (in-book or Fanqie) |
+| `/` | Search menu (in-book / Fanqie / so-novel sources) |
 | `F` | Fanqie search |
 | `n` / `N` | Next / previous match |
 | `h`, `?` | Help |

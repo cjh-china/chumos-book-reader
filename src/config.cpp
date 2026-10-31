@@ -115,6 +115,13 @@ bool Config::load(const std::string& dir) {
                                 ? true : au["downloader"].asBool();
     }
 
+    // so-novel 配置
+    soNovelHome_ = root["sonovel_home"].toStringValue();
+    const minijson::Value& asn = root["auto_start_sonovel"];
+    if (asn.type != minijson::Value::Null) {
+        autoStartSoNovel_ = asn.asBool();
+    }
+
     // 书籍来源映射
     bookSources.clear();
     const minijson::Value& src = root["book_sources"];
@@ -164,6 +171,9 @@ bool Config::save() {
     os += "    \"books\": " + std::string(autoUpdateBooks_ ? "true" : "false") + ",\n";
     os += "    \"downloader\": " + std::string(autoUpdateDownloader_ ? "true" : "false") + "\n";
     os += "  },\n";
+
+    os += "  \"sonovel_home\": \"" + jsonEscape(soNovelHome_) + "\",\n";
+    os += "  \"auto_start_sonovel\": " + std::string(autoStartSoNovel_ ? "true" : "false") + ",\n";
 
     os += "  \"book_sources\": {\n";
     for (size_t i = 0; i < bookSources.size(); i++) {

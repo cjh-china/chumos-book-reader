@@ -52,6 +52,14 @@ public:
     void setBookSource(const std::string& filePath, const std::string& bookId);
     std::string bookSource(const std::string& filePath) const;
 
+    // so-novel 安装目录（含 sonovel.exe）。为空则自动探测。
+    const std::string& soNovelHome() const { return soNovelHome_; }
+    void setSoNovelHome(const std::string& dir) { soNovelHome_ = dir; save(); }
+
+    // 是否自动拉起 so-novel 服务（默认开启）
+    bool autoStartSoNovel() const { return autoStartSoNovel_; }
+    void setAutoStartSoNovel(bool on) { autoStartSoNovel_ = on; save(); }
+
     static bool isBookFile(const std::string& path);
     static std::vector<std::string> scanDir(const std::string& dir, int maxDepth = 4);
 
@@ -64,6 +72,8 @@ private:
     int sortMode_ = 0;
     bool autoUpdateBooks_ = true;
     bool autoUpdateDownloader_ = true;
+    bool autoStartSoNovel_ = true;
+    std::string soNovelHome_;
 
     // 文件路径 → 番茄 book_id 映射
     std::vector<std::pair<std::string, std::string>> bookSources;

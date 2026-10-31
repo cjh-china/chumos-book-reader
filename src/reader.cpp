@@ -462,10 +462,11 @@ void Reader::openSearchMenu() {
 
         tui->drawText(2, 2, "1. 在本文中查找");
         tui->drawText(3, 2, "2. 在番茄小说中搜索");
+        tui->drawText(4, 2, "3. 在 so-novel 书源中搜索");
         tui->drawText(5, 2, "q. 返回阅读");
 
         tui->drawText(height - 1, 0, std::string(width, ' '));
-        tui->drawText(height - 1, 0, "  请选择 (1/2/q)");
+        tui->drawText(height - 1, 0, "  请选择 (1/2/3/q)");
         tui->refresh();
 
         int key = -1;
@@ -482,6 +483,7 @@ void Reader::openSearchMenu() {
         if (key == 'q' || key == 'Q' || key == 27) return;
         if (key == '1') { searchInBook(); return; }
         if (key == '2') { searchFanqie(); return; }
+        if (key == '3') { searchSoNovel(); return; }
     }
 }
 
@@ -1503,7 +1505,7 @@ bool Reader::loadBookOrRecover(const std::string& path, std::string& failReason)
 
 void Reader::showSettings() {
     int sel = 0;
-    const int ITEM_COUNT = 2;
+    const int ITEM_COUNT = 5;
 
     while (true) {
         int h = tui->getHeight();
@@ -1527,14 +1529,32 @@ void Reader::showSettings() {
             tui->drawLine(row, 1, line, w - 2);
         };
 
-        drawItem(3, 0, "打开番茄书时检查更新", cfg.autoUpdateBooks());
-        drawItem(5, 1, "启动时检查下载器更新", cfg.autoUpdateDownloader());
+        tui->drawText(2, 2, "自动更新");
+        drawItem(3, 0, "  打开番茄书时检查更新", cfg.autoUpdateBooks());
+        drawItem(4, 1, "  启动时检查番茄下载器更新", cfg.autoUpdateDownloader());
 
-        // 说明
-        tui->drawText(8, 2, "说明：");
-        tui->drawText(9, 4, "· 开启后，打开番茄来源的书会自动拉取新章节");
-        tui->drawText(10, 4, "· 下载器更新会在启动时检查，有新版才提示");
-        tui->drawText(11, 4, "· 设置保存在 ebook_reader.config.json");
+        tui->drawText(6, 2, "so-novel");
+        drawItem(7, 2, "  自动启动 so-novel 服务", cfg.autoStartSoNovel());
+        {
+            std::string home = cfg.soNovelHome();
+            if (home.empty()) {
+                std::string found = SoNovel::findHome();
+                home = found.empty() ? "(未找到)" : found;
+            }
+            bool isSel = (sel == 3);
+            std::string mark = isSel ? "> " : "  ";
+            std::string line = mark + "  安装目录: " + home;
+            tui->drawText(8, 0, std::string(w, ' '));
+            tui->drawLine(8, 1, line, w - 2);
+        }
+        drawItem(9, 4, "  so-novel 自动更新（内置）",
+                 true);   // 由 so-novel 自己的 config.ini 控制，这里只展示
+
+        tui->drawText(12, 2, "说明：");
+        tui->drawText(13, 4, "· 番茄书更新：打开时增量拉取新章节");
+        tui->drawText(14, 4, "· so-novel 服务：未运行时自动拉起 sonovel.exe");
+        tui->drawText(15, 4, "· 按 Enter 可编辑 so-novel 安装目录");
+        tui->drawText(16, 4, "· 设置保存在 ebook_reader.config.json");
 
         tui->drawText(h - 1, 0, std::string(w, ' '));
         tui->drawText(h - 1, 0, "  ↑↓ 选择 | 空格/回车 切换 | q/Esc 返回");
@@ -1568,8 +1588,280 @@ void Reader::showSettings() {
                 cfg.setAutoUpdateBooks(!cfg.autoUpdateBooks());
             } else if (sel == 1) {
                 cfg.setAutoUpdateDownloader(!cfg.autoUpdateDownloader());
+            } else if (sel == 2) {
+                cfg.setAutoStartSoNovel(!cfg.autoStartSoNovel());
+            } else if (sel == 3) {
+                // 编辑 so-novel 安装目录
+                std::string cur = cfg.soNovelHome();
+                std::string input = tui->promptInput(h - 1, 0, "安装目录: ", cur);
+                if (!input.empty()) {
+                    if (fsutil::isDirectory(input)) {
+                        cfg.setSoNovelHome(input);
+                    } else {
+                        // 目录无效时提示，但不保存
+                        tui->drawText(h - 2, 2, "目录不存在，未保存");
+                        tui->refresh();
+#ifdef PLATFORM_WINDOWS
+                        Sleep(1200);
+#else
+                        napms(1200);
+#endif
+                    }
+                }
             }
             continue;
         }
     }
+}
+
+// ==================== so-novel 搜索 ====================
+
+void Reader::searchSoNovel() {
+#ifndef HAS_CURL
+    int height = tui->getHeight();
+    tui->clear();
+    tui->drawText(2, 2, "so-novel 搜索需要 libcurl 支持。");
+    tui->drawText(height - 1, 0, "  按任意键返回");
+    tui->refresh();
+    tui->getKey();
+    return;
+#else
+    int height = tui->getHeight();
+    int width = tui->getWidth();
+
+    SoNovel svc;
+
+    // 服务未运行时尝试自动拉起（可在设置里关闭）
+    if (!svc.isAvailable()) {
+        if (cfg.autoStartSoNovel()) {
+            tui->clear();
+            tui->drawText(2, 2, "正在启动 so-novel 服务...");
+            tui->drawText(4, 2, "首次启动可能需要 10~20 秒");
+            tui->refresh();
+
+            if (!svc.ensureService(cfg.soNovelHome(), 25)) {
+                tui->clear();
+                tui->drawText(2, 2, "无法启动 so-novel：" + svc.lastError());
+                tui->drawText(4, 2, "请确认 sonovel.exe 的位置，或手动启动后重试。");
+                tui->drawText(6, 2, "默认查找路径：");
+                tui->drawText(7, 4, "· 程序同目录 / tools/sonovel");
+                tui->drawText(8, 4, "· D:\\sonovel-windows");
+                tui->drawText(9, 4, "· 环境变量 SONOVEL_HOME");
+                tui->drawText(11, 2, "也可在设置里关闭自动启动。");
+                tui->drawText(height - 1, 0, "  按任意键返回");
+                tui->refresh();
+                tui->getKey();
+                return;
+            }
+        } else {
+            tui->clear();
+            tui->drawText(2, 2, "so-novel 服务未运行（自动启动已在设置中关闭）。");
+            tui->drawText(4, 2, "请手动启动 sonovel.exe 后重试。");
+            tui->drawText(height - 1, 0, "  按任意键返回");
+            tui->refresh();
+            tui->getKey();
+            return;
+        }
+    }
+
+    tui->clear();
+    tui->drawText(2, 2, "so-novel 书源搜索（聚合所有书源，可能较慢）");
+    std::string kw = tui->promptInput(4, 2, "关键词: ");
+    if (kw.empty()) return;
+
+    tui->clear();
+    tui->drawText(2, 2, "正在聚合搜索「" + kw + "」...");
+    tui->drawText(4, 2, "so-novel 会同时查询所有书源，通常需要 10~30 秒");
+    tui->refresh();
+
+    std::vector<SoNovel::Book> results = svc.search(kw);
+
+    if (results.empty()) {
+        tui->drawText(6, 2, "未找到结果：" + svc.lastError());
+        tui->drawText(height - 1, 0, "  按任意键返回");
+        tui->refresh();
+        tui->getKey();
+        return;
+    }
+
+    std::string filter;
+    std::vector<int> filtered;
+    auto refreshFilter = [&]() {
+        filtered.clear();
+        std::string f = filter;
+        std::transform(f.begin(), f.end(), f.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        for (size_t i = 0; i < results.size(); i++) {
+            if (f.empty()) { filtered.push_back((int)i); continue; }
+            std::string hay = results[i].bookName + " " + results[i].author +
+                              " " + results[i].sourceName;
+            std::transform(hay.begin(), hay.end(), hay.begin(),
+                           [](unsigned char c) { return (char)std::tolower(c); });
+            if (hay.find(f) != std::string::npos) filtered.push_back((int)i);
+        }
+    };
+    refreshFilter();
+
+    int sel = 0;
+    int offset = 0;
+
+    while (true) {
+        int h = tui->getHeight();
+        int w = tui->getWidth();
+
+        std::string hdr = " so-novel: " + kw + "  (" + std::to_string(filtered.size()) +
+                          "/" + std::to_string(results.size()) + " 条)";
+        if (!filter.empty()) hdr += "  过滤: " + filter;
+
+        tui->clear();
+        tui->drawLine(0, 0, hdr, w - 1);
+        for (int i = (int)hdr.size(); i < w; i++) tui->drawText(0, i, " ");
+
+        int listH = h - 2;
+        if (listH < 3) listH = 3;
+
+        if (sel < 0) sel = 0;
+        if (sel >= (int)filtered.size()) sel = (int)filtered.size() - 1;
+        if (sel < 0) sel = 0;
+
+        if (sel < offset) offset = sel;
+        if (sel >= offset + listH) offset = sel - listH + 1;
+        if (offset < 0) offset = 0;
+
+        for (int i = 0; i < listH; i++) {
+            int row = 1 + i;
+            int idx = offset + i;
+            tui->drawText(row, 0, std::string(w, ' '));
+            if (idx >= (int)filtered.size()) continue;
+
+            const SoNovel::Book& b = results[filtered[idx]];
+            bool isSel = (idx == sel);
+
+            std::string mark = isSel ? "> " : "  ";
+            std::string line = mark + b.bookName + " - " + b.author + "  [" + b.sourceName + "]";
+
+            int avail = w - 2;
+            std::string fitted;
+            int wsum = 0;
+            size_t pos = 0;
+            while (pos < line.size()) {
+                unsigned char c = (unsigned char)line[pos];
+                int len = (c & 0x80) == 0 ? 1 : (c & 0xE0) == 0xC0 ? 2
+                        : (c & 0xF0) == 0xE0 ? 3 : 4;
+                if (pos + len > line.size()) break;
+                unsigned int cp = 0;
+                if (len == 1) cp = c;
+                else if (len == 2) cp = c & 0x1F;
+                else if (len == 3) cp = c & 0x0F;
+                else cp = c & 0x07;
+                for (int k = 1; k < len; k++)
+                    cp = (cp << 6) | ((unsigned char)line[pos + k] & 0x3F);
+                bool wide = (cp >= 0x1100 && (
+                    cp <= 0x115F || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+                    (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+                    (cp >= 0xFF00 && cp <= 0xFF60)));
+                int cw = wide ? 2 : 1;
+                if (wsum + cw > avail) break;
+                fitted.append(line, pos, (size_t)len);
+                wsum += cw;
+                pos += (size_t)len;
+            }
+            tui->drawLine(row, 1, fitted, avail);
+        }
+
+        tui->drawText(h - 1, 0, std::string(w, ' '));
+        tui->drawText(h - 1, 0,
+            "  ↑↓ 选择 | Enter 下载到本地 | / 过滤 | q 返回");
+
+        tui->refresh();
+
+        int key = -1;
+        while (key == -1) {
+            key = tui->getKey();
+            if (key == -1) {
+#ifdef PLATFORM_WINDOWS
+                Sleep(15);
+#else
+                napms(15);
+#endif
+            }
+        }
+
+        if (key == 'q' || key == 'Q') return;
+
+        if (key == '/') {
+            filter = tui->promptInput(h - 1, 0, "过滤: ", filter);
+            refreshFilter();
+            sel = 0;
+            offset = 0;
+            continue;
+        }
+
+#ifdef PLATFORM_WINDOWS
+        if (key == 1000) { if (sel > 0) sel--; continue; }
+        if (key == 1001) { if (sel + 1 < (int)filtered.size()) sel++; continue; }
+        if (key == 1002) { sel -= listH; if (sel < 0) sel = 0; continue; }
+        if (key == 1003) { sel += listH; if (sel >= (int)filtered.size()) sel = (int)filtered.size() - 1; continue; }
+#else
+        if (key == KEY_UP) { if (sel > 0) sel--; continue; }
+        if (key == KEY_DOWN) { if (sel + 1 < (int)filtered.size()) sel++; continue; }
+        if (key == KEY_PPAGE) { sel -= listH; if (sel < 0) sel = 0; continue; }
+        if (key == KEY_NPAGE) { sel += listH; if (sel >= (int)filtered.size()) sel = (int)filtered.size() - 1; continue; }
+#endif
+
+        if (key == 13 || key == 10) {
+            if (filtered.empty()) continue;
+            const SoNovel::Book& b = results[filtered[sel]];
+
+            tui->clear();
+            tui->drawText(2, 2, "正在下载《" + b.bookName + "》...");
+            tui->drawText(3, 2, "书源: " + b.sourceName);
+            tui->drawText(5, 2, "so-novel 会逐章抓取，章节多的书可能要几分钟");
+            tui->drawText(6, 2, "请耐心等待，不要关闭窗口");
+            tui->refresh();
+
+            std::string fileName = svc.download(b, "txt");
+            if (fileName.empty()) {
+                tui->drawText(8, 2, "下载失败: " + svc.lastError());
+                tui->drawText(h - 1, 0, "  按任意键返回列表");
+                tui->refresh();
+                tui->getKey();
+                continue;
+            }
+
+            tui->drawText(8, 2, "服务端完成: " + fileName);
+            tui->drawText(9, 2, "正在复制到本地...");
+            tui->refresh();
+
+            std::string localDir = downloadDir();
+            std::string localPath;
+            if (!svc.fetchToLocal(fileName, localDir, localPath)) {
+                tui->drawText(11, 2, "复制失败: " + svc.lastError());
+                tui->drawText(h - 1, 0, "  按任意键返回列表");
+                tui->refresh();
+                tui->getKey();
+                continue;
+            }
+
+            tui->drawText(11, 2, "已保存: " + localPath);
+            tui->drawText(13, 2, "按任意键开始阅读");
+            tui->refresh();
+            tui->getKey();
+
+            if (Parser::parse(localPath, book)) {
+                buildWrappedContent();
+                cfg.recordFile(localPath);
+                libraryDirty = true;
+                bookLoadedInMemory = true;
+                return;
+            }
+
+            tui->drawText(13, 2, "文件已保存，但解析失败，按任意键返回书库");
+            libraryDirty = true;
+            tui->refresh();
+            tui->getKey();
+            return;
+        }
+    }
+#endif
 }
