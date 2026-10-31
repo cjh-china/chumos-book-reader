@@ -1,0 +1,56 @@
+# ===== 构建产物 =====
+build/
+build_*/
+cmake-build-*/
+
+# ===== 编译中间文件 =====
+*.o
+*.obj
+*.exe
+*.dll
+*.dll.a
+*.a
+*.lib
+*.so
+*.dylib
+*.pdb
+*.ilk
+
+# ===== CMake =====
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.ninja
+.ninja_deps
+.ninja_log
+
+# ===== 运行时生成 =====
+downloads/
+cache/
+ebook_reader.config.json
+music_store.json
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== 测试残留 =====
+test.txt
+test_fanqie.txt
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== 系统 =====
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ===== 保留（覆盖上面的 *.exe 规则） =====
+!tools/tomato/win64/TomatoNovelDownloader.exe
+!tools/tomato/TomatoNovelDownloader.exe
