@@ -221,7 +221,10 @@ void Config::addLibraryDir(const std::string& dir) {
 }
 
 bool Config::removeLibraryDir(const std::string& dir) {
-    auto it = std::find(libraryDirs.begin(), libraryDirs.end(), dir);
+    // 与 addLibraryDir 保持一致：存进去的是 normalize 后的路径，
+    // 删除时也必须 normalize，否则正斜杠路径永远匹配不上。
+    std::string full = fsutil::normalize(dir);
+    auto it = std::find(libraryDirs.begin(), libraryDirs.end(), full);
     if (it == libraryDirs.end()) return false;
     libraryDirs.erase(it);
     save();
