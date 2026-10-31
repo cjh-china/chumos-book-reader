@@ -20,6 +20,14 @@
 #include "fanqie_resource.h"
 #endif
 
+#ifdef HAS_API
+#include "api_routes.h"
+#include "http_server.h"
+#include <csignal>
+#include <cstdlib>
+#include <memory>
+#endif
+
 #ifdef HAS_CURL
 static int runFanqie() {
     FanqieDownloader dl(8);
@@ -80,6 +88,9 @@ static void printUsage(const char* prog) {
     std::cerr << "  " << prog << "                    打开书库" << std::endl;
     std::cerr << "  " << prog << " <文件路径或URL>    直接打开" << std::endl;
     std::cerr << "  " << prog << " --fanqie           番茄小说下载" << std::endl;
+#ifdef HAS_API
+    std::cerr << "  " << prog << " --serve [--port N] 以 HTTP API 模式运行（无 TUI）" << std::endl;
+#endif
     std::cerr << std::endl;
     std::cerr << "支持格式: TXT(自动识别 UTF-8/UTF-16/GBK), EPUB, DOCX" << std::endl;
     std::cerr << "PDF 尚未支持（仅给出提示）" << std::endl;
@@ -140,6 +151,32 @@ int main(int argc, char* argv[]) {
             return runFanqie();
 #else
             std::cerr << "番茄下载功能需要 libcurl，请在构建时启用。" << std::endl;
+            return 1;
+#endif
+        }
+        if (arg == "--serve") {
+#ifdef HAS_API
+            int port = 8686;
+            std::string host = "127.0.0.1";
+            for (size_t i = 2; i < args.size(); i++) {
+                if ((args[i] == "--port" || args[i] == "-p") && i + 1 < args.size()) {
+                    try { port = std::stoi(args[++i]); } catch (...) { port = 8686; }
+                } else if (args[i] == "--host" && i + 1 < args.size()) {
+                    host = args[++i];
+                }
+            }
+
+            api::Server server;
+            api::registerRoutes(server);
+
+            std::string err;
+            if (!server.listen(host, port, err)) {
+                std::cerr << "API 服务启动失败: " << err << std::endl;
+                return 1;
+            }
+            return 0;
+#else
+            std::cerr << "API 模式未编译进本程序，请用 -DENABLE_API=ON 重新构建。" << std::endl;
             return 1;
 #endif
         }

@@ -98,11 +98,8 @@ void Reader::buildWrappedContent() {
             continue;
         }
 
-        // 章节标题行不折行
-        if (line.find("第") != std::string::npos &&
-            (line.find("章") != std::string::npos ||
-             line.find("节") != std::string::npos ||
-             line.find("回") != std::string::npos)) {
+        // 章节标题行不折行（与 Parser 用同一套判定）
+        if (Parser::isChapterTitle(line)) {
             book.wrappedContent.push_back(line);
             continue;
         }
@@ -779,11 +776,7 @@ void Reader::loadTextAsBook(const std::string& text, const std::string& title) {
 
     for (size_t i = 0; i < book.content.size(); i++) {
         const std::string& line = book.content[i];
-        if (line.find("第") != std::string::npos &&
-            (line.find("章") != std::string::npos ||
-             line.find("节") != std::string::npos ||
-             line.find("回") != std::string::npos) &&
-            line.size() < 360) {   // 约 120 个汉字
+        if (Parser::isChapterTitle(line)) {
             book.chapters.push_back(line);
             book.chapterStarts.push_back((int)i);
         }

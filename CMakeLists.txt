@@ -119,6 +119,11 @@ else()
     set(TUI_SOURCES src/tui_ncurses.cpp)
 endif()
 
+# ==================== 可选：HTTP API 测试服务 ====================
+# 启用后可通过 `ebook_reader --serve [--port 8686]` 以纯 HTTP 方式调用所有功能，
+# 不进入 TUI，适合自动化测试。默认关闭。
+option(ENABLE_API "Expose all features as HTTP API endpoints (test mode)" OFF)
+
 # ==================== 可选：音乐播放器 ====================
 # 默认关闭。开启后包含本地曲库、歌词、歌单、在线搜索等完整功能。
 # 依赖：libcurl（在线搜索）、miniaudio（third_party/ 内置）、Windows winmm/ole32
@@ -237,6 +242,19 @@ set(SOURCES
 )
 
 add_executable(ebook_reader ${SOURCES})
+
+# ==================== HTTP API 测试服务源文件 ====================
+if(ENABLE_API)
+    if(NOT CURL_FOUND)
+        message(WARNING "ENABLE_API without libcurl: only reading/config endpoints available")
+    endif()
+    add_definitions(-DHAS_API)
+    target_sources(ebook_reader PRIVATE
+        src/http_server.cpp
+        src/api_routes.cpp
+    )
+    message(STATUS "HTTP API test server enabled (--serve)")
+endif()
 
 # 外置模式：构建后把下载器与配置复制到输出目录
 # 内嵌模式：不复制，运行时自行释放

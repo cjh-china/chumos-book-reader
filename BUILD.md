@@ -82,6 +82,7 @@
 | ENABLE_LOCAL_MUSIC_API | OFF | 是否接入本地 NeteaseCloudMusicApi（需 ENABLE_MUSIC=ON） |
 | LOCAL_MUSIC_API_BASE | http://127.0.0.1:3000 | 本地 API 地址 |
 | STATIC_LINK | OFF | Windows 下把所有第三方库静态编入 exe，产物不依赖任何 DLL |
+| ENABLE_API | OFF | 以 HTTP API 方式暴露全部功能（`--serve`，不启动 TUI） |
 
 ### 依赖关系
 

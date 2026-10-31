@@ -7,6 +7,39 @@
 #include <cctype>
 #include <regex>
 
+bool Parser::isChapterTitle(const std::string& line) {
+    // 去掉首尾空白
+    size_t a = 0, b = line.size();
+    while (a < b && std::isspace((unsigned char)line[a])) a++;
+    while (b > a && std::isspace((unsigned char)line[b - 1])) b--;
+    if (a >= b) return false;
+    std::string s = line.substr(a, b - a);
+
+    // 章节标题通常很短；正文句子里顺带出现"第一章"时长度会超限
+    // 180 字节 ≈ 60 个汉字，足够容纳绝大多数章节标题
+    if (s.size() > 180) return false;
+
+    // 中文：必须以「第」开头
+    if (s.size() >= 6 && s.compare(0, 3, "第") == 0) {
+        static const char* seps[] = {"章", "节", "回", "卷", "篇"};
+        for (const char* sep : seps) {
+            if (s.find(sep) != std::string::npos) return true;
+        }
+    }
+
+    // 英文：Chapter / CHAPTER 开头，且后跟空格或数字
+    if (s.size() > 7) {
+        std::string head = s.substr(0, 7);
+        for (char& c : head) c = (char)std::tolower((unsigned char)c);
+        if (head.compare(0, 7, "chapter") == 0 &&
+            (s.size() > 7 && (s[7] == ' ' || std::isdigit((unsigned char)s[7])))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 std::string Parser::getExtension(const std::string& filename) {
     size_t pos = filename.find_last_of('.');
     if (pos == std::string::npos) return "";
@@ -41,10 +74,7 @@ bool Parser::parseTXT(const std::string& filename, Book& book) {
         book.content.push_back(line);
 
         if (!line.empty()) {
-            if ((line.find("第") != std::string::npos &&
-                 (line.find("章") != std::string::npos || line.find("节") != std::string::npos ||
-                  line.find("回") != std::string::npos)) ||
-                (line.find("Chapter") != std::string::npos && line.find(" ") != std::string::npos)) {
+            if (isChapterTitle(line)) {
                 std::string chapterTitle = line;
                 // 按 UTF-8 字符数截断，避免切坏多字节字符
                 if (chapterTitle.size() > 180) {

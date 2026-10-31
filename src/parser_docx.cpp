@@ -146,15 +146,10 @@ bool Parser::parseDOCX(const std::string& filename, Book& book) {
         book.content.push_back(line);
     }
 
-    // 章节识别：与 TXT 一致，按 "第X章/节/回" 标题切分
+    // 章节识别：与 TXT 共用同一套规则
     for (size_t i = 0; i < book.content.size(); i++) {
-        const std::string& line = book.content[i];
-        if (line.find("第") != std::string::npos &&
-            (line.find("章") != std::string::npos ||
-             line.find("节") != std::string::npos ||
-             line.find("回") != std::string::npos) &&
-            line.size() < 360) {
-            book.chapters.push_back(line);
+        if (Parser::isChapterTitle(book.content[i])) {
+            book.chapters.push_back(book.content[i]);
             book.chapterStarts.push_back((int)i);
         }
     }

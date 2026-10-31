@@ -59,6 +59,35 @@ The NetEase source talks to `interface.music.163.com` directly over the `eapi`
 protocol, implemented natively in C++ (AES-128-ECB + MD5 via OpenSSL). No Node
 runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 
+### HTTP API test mode (`-DENABLE_API=ON`)
+
+Build with `-DENABLE_API=ON` and run `ebook_reader --serve [--port 8686] [--host 127.0.0.1]`
+to expose every feature over HTTP without starting the TUI. Intended for automated
+testing; the server is single-threaded and binds to loopback by default.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/health` | status + compiled-in capabilities |
+| GET | `/api/library[?dir=&depth=]` | list books |
+| GET/POST | `/api/book/open` | open a book (`path`) |
+| GET | `/api/book/info` | title, author, page count |
+| GET | `/api/book/toc` | chapter list |
+| GET | `/api/book/content?page=N` | page of wrapped lines (or `line`/`count`) |
+| GET | `/api/book/search?q=` | in-book search |
+| GET | `/api/fanqie/search?q=` | Fanqie search |
+| POST | `/api/fanqie/download` | download a Fanqie book |
+| GET | `/api/sonovel/search?q=` | so-novel aggregated search |
+| POST | `/api/sonovel/download` | download via so-novel |
+| GET | `/api/music/library[?dir=]` | local music library |
+| GET | `/api/online/sources` | available online sources |
+| GET | `/api/online/search?q=&source=` | online music search |
+| GET | `/api/online/resolve?id=&source=` | resolve a stream URL |
+| GET/POST | `/api/config` | read / update settings |
+| POST | `/api/config/dir/add`, `/api/config/dir/remove` | manage library folders |
+
+Endpoints for Fanqie / so-novel / music are only registered when the corresponding
+features were compiled in.
+
 ### Optional local music API (`-DENABLE_LOCAL_MUSIC_API=ON`)
 
 Connects to a locally running [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi)
