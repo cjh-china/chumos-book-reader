@@ -349,6 +349,8 @@ if(ENABLE_MUSIC)
             src/music_ui.cpp
             src/online_music.cpp
             src/netease_api.cpp
+            src/term_qr.cpp
+            third_party/qrcodegen.cpp
         )
         if(WIN32)
             target_link_libraries(ebook_reader winmm ole32)

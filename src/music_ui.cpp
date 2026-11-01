@@ -1,4 +1,5 @@
 #include "music_ui.h"
+#include "term_qr.h"
 #include "fs_util.h"
 
 #include <algorithm>
@@ -1356,6 +1357,11 @@ void MusicUI::refreshAccount() {
 }
 
 void MusicUI::doQrLogin() {
+    // 先清屏并提示，避免请求期间画面卡住看起来像死机
+    tui->clear();
+    tui->drawText(2, 2, "正在生成登录二维码...");
+    tui->refresh();
+
     OnlineMusicService svc;
     loginQrUrl.clear();
     loginKey.clear();
@@ -1460,39 +1466,65 @@ void MusicUI::drawLogin() {
     int h = tui->getHeight();
     int w = tui->getWidth();
 
+    // 每次整屏重绘：登录页布局会剧烈变化（提示 → 二维码 → 已登录），
+    // 只覆盖局部会残留旧文字
+    tui->clear();
+
     tui->drawText(0, 0, std::string(w, ' '));
     tui->drawLine(0, 0, " 网易云账号", w - 1);
 
     if (account.loggedIn) {
-        tui->drawText(3, 2, "已登录");
-        tui->drawText(5, 4, "昵称: " + (account.nickname.empty() ? "(未知)" : account.nickname));
-        tui->drawText(6, 4, "UID: " + account.userId);
-        tui->drawText(7, 4, account.vip ? "VIP: 是（可用无损音质）" : "VIP: 否");
-        tui->drawText(10, 2, "按 L 退出登录");
+        tui->drawText(2, 2, "已登录");
+        tui->drawText(4, 4, "昵称: " + (account.nickname.empty() ? "(未知)" : account.nickname));
+        tui->drawText(5, 4, "UID: " + account.userId);
+        tui->drawText(6, 4, account.vip ? "VIP: 是（可用无损音质）" : "VIP: 否");
+        tui->drawText(9, 2, "按 L 退出登录");
     } else {
-        tui->drawText(3, 2, "未登录");
-        if (loginKey.empty()) {
-            tui->drawText(5, 2, "按 Enter 生成登录二维码");
-            tui->drawText(7, 4, "登录后可解锁：");
-            tui->drawText(8, 6, "· 无损 / Hi-Res 音质");
-            tui->drawText(9, 6, "· 我的歌单");
-            tui->drawText(10, 6, "· 每日推荐");
-        } else {
-            tui->drawText(5, 2, "二维码内容（复制到手机浏览器打开）：");
-            // 长 URL 折行显示
-            int avail = w - 6;
-            std::string url = loginQrUrl;
-            int row = 6;
-            while (!url.empty() && row < 10) {
-                std::string part = truncateUtf8(url, avail);
-                size_t bytes = part.size();
-                tui->drawText(row++, 4, part);
-                url = url.substr(bytes);
-            }
+        tui->drawText(1, 2, "未登录");
 
-            tui->drawText(12, 2, "状态: " + loginMsg);
-            tui->drawText(13, 2, "扫码后在手机上确认，程序会自动完成登录");
-            tui->drawText(15, 2, "按 R 重新生成二维码");
+        if (loginKey.empty()) {
+            tui->drawText(3, 2, "按 Enter 生成登录二维码");
+            tui->drawText(5, 4, "登录后可解锁：");
+            tui->drawText(6, 6, "· 无损 / Hi-Res 音质");
+            tui->drawText(7, 6, "· 我的歌单");
+            tui->drawText(8, 6, "· 每日推荐");
+        } else {
+            // 尝试用 Unicode 半块字符渲染二维码图形
+            std::vector<std::string> qrLines = renderTerminalQr(loginQrUrl, 1);
+            int qrW = terminalQrWidth(loginQrUrl, 1);
+            int qrH = (int)qrLines.size();
+
+            // 需要：QR 行 + 状态 2 行 + 页脚，且不留旧文字
+            bool fits = (qrH > 0 && qrH + 5 <= h && qrW + 2 <= w);
+
+            if (fits) {
+                int startRow = 2;
+                int startCol = (w - qrW) / 2;
+                if (startCol < 1) startCol = 1;
+
+                for (int i = 0; i < qrH; i++) {
+                    // 用 drawText 直接输出，绕开 drawLine 的宽度截断
+                    tui->drawText(startRow + i, startCol, qrLines[i]);
+                }
+
+                int statusRow = startRow + qrH + 1;
+                tui->drawText(statusRow, 2, "状态: " + loginMsg);
+                tui->drawText(statusRow + 1, 2, "用网易云音乐 App 扫码 · R 刷新 · Esc 返回");
+            } else {
+                // 终端太小，退回 URL 文本
+                tui->drawText(3, 2, "终端窗口太小，无法显示二维码");
+                tui->drawText(5, 2, "请调大窗口后按 R 刷新，或手动打开：");
+                int avail = w - 6;
+                std::string url = loginQrUrl;
+                int row = 7;
+                while (!url.empty() && row < h - 4) {
+                    std::string part = truncateUtf8(url, avail);
+                    size_t bytes = part.size();
+                    tui->drawText(row++, 3, part);
+                    url = url.substr(bytes);
+                }
+                tui->drawText(row + 1, 2, "状态: " + loginMsg);
+            }
         }
     }
 
