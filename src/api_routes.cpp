@@ -652,6 +652,201 @@ Response handleOnlineResolve(const Request& req) {
     return okJson(j);
 }
 
+// ==================== 网易云：登录 / 歌单 / 排行榜 ====================
+
+Response handleNeteaseAccount(const Request&) {
+    OnlineMusicService svc;
+    NeteaseAccount acc;
+    if (!svc.account(acc)) return Response::error("查询登录状态失败: " + svc.lastError(), 500);
+
+    Json j;
+    j.beginObject();
+    j.key("loggedIn").value(acc.loggedIn);
+    j.key("userId").value(acc.userId);
+    j.key("nickname").value(acc.nickname);
+    j.key("vip").value(acc.vip);
+    j.endObject();
+    return okJson(j);
+}
+
+Response handleNeteaseQrStart(const Request&) {
+    OnlineMusicService svc;
+    std::string key, url, msg;
+    if (!svc.beginQrLogin(key, url, msg)) {
+        return Response::error("生成二维码失败: " + msg, 500);
+    }
+
+    Json j;
+    j.beginObject();
+    j.key("key").value(key);
+    j.key("url").value(url);
+    j.key("message").value(msg);
+    j.endObject();
+    return okJson(j);
+}
+
+Response handleNeteaseQrPoll(const Request& req) {
+    std::string key = queryStr(req, "key");
+    if (key.empty()) return badRequest("缺少参数 key");
+
+    OnlineMusicService svc;
+    int code = 801;
+    std::string msg;
+    if (!svc.pollQrLogin(key, code, msg)) {
+        return Response::error("查询扫码状态失败: " + msg, 500);
+    }
+
+    Json j;
+    j.beginObject();
+    j.key("code").value(code);
+    j.key("message").value(msg);
+    j.key("loggedIn").value(code == 803);
+    j.endObject();
+    return okJson(j);
+}
+
+Response handleNeteaseLogout(const Request&) {
+    OnlineMusicService svc;
+    svc.logoutNetease();
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.endObject();
+    return okJson(j);
+}
+
+namespace {
+Response playlistsToJson(const std::vector<OnlinePlaylist>& list) {
+    Json j;
+    j.beginObject();
+    j.key("count").value((int)list.size());
+    j.key("playlists");
+    j.beginArray();
+    for (const auto& p : list) {
+        j.beginObject();
+        j.key("id").value(p.id);
+        j.key("name").value(p.name);
+        j.key("trackCount").value(p.trackCount);
+        j.key("cover").value(p.coverUrl);
+        j.key("creator").value(p.creator);
+        j.key("toplist").value(p.isToplist);
+        j.endObject();
+    }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+Response songsToJson(const std::vector<OnlineSong>& list) {
+    Json j;
+    j.beginObject();
+    j.key("count").value((int)list.size());
+    j.key("songs");
+    j.beginArray();
+    for (const auto& s : list) {
+        j.beginObject();
+        j.key("id").value(s.id);
+        j.key("title").value(s.title);
+        j.key("artist").value(s.artist);
+        j.key("album").value(s.album);
+        j.key("duration").value(s.durationSec);
+        j.key("playable").value(!s.streamUrl.empty());
+        j.key("hasLyric").value(!s.lyricText.empty());
+        j.key("hasTranslation").value(!s.transLyric.empty());
+        j.endObject();
+    }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+} // namespace
+
+Response handleNeteasePlaylists(const Request&) {
+    OnlineMusicService svc;
+    std::vector<OnlinePlaylist> list;
+    if (!svc.neteasePlaylists(list)) {
+        return Response::error("获取歌单失败: " + svc.lastError(), 500);
+    }
+    return playlistsToJson(list);
+}
+
+Response handleNeteasePlaylistSongs(const Request& req) {
+    std::string id = queryStr(req, "id");
+    if (id.empty()) return badRequest("缺少参数 id");
+
+    OnlineMusicService svc;
+    std::vector<OnlineSong> songs;
+    if (!svc.neteasePlaylistSongs(id, songs)) {
+        return Response::error("获取歌单歌曲失败: " + svc.lastError(), 500);
+    }
+    return songsToJson(songs);
+}
+
+Response handleNeteaseToplists(const Request&) {
+    OnlineMusicService svc;
+    std::vector<OnlinePlaylist> list;
+    if (!svc.neteaseToplists(list)) {
+        return Response::error("获取排行榜失败: " + svc.lastError(), 500);
+    }
+    return playlistsToJson(list);
+}
+
+Response handleNeteaseRecommend(const Request&) {
+    OnlineMusicService svc;
+    std::vector<OnlineSong> songs;
+    if (!svc.neteaseRecommend(songs)) {
+        return Response::error("获取每日推荐失败: " + svc.lastError(), 500);
+    }
+    return songsToJson(songs);
+}
+
+Response handleNeteaseLyric(const Request& req) {
+    std::string id = queryStr(req, "id");
+    if (id.empty()) return badRequest("缺少参数 id");
+
+    OnlineMusicService svc;
+    std::string lrc, trans;
+    bool ok = svc.neteaseLyricEx(id, lrc, trans);
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(ok);
+    j.key("id").value(id);
+    j.key("lrc").value(lrc);
+    j.key("translated").value(trans);
+    if (!ok) j.key("error").value(svc.lastError());
+    j.endObject();
+    return okJson(j);
+}
+
+Response handleNeteaseDownload(const Request& req) {
+    std::string id = queryStr(req, "id");
+    std::string source = queryStr(req, "source", "netease");
+    std::string title = queryStr(req, "title");
+    std::string artist = queryStr(req, "artist");
+    if (id.empty()) return badRequest("缺少参数 id");
+
+    OnlineSong s;
+    s.id = id;
+    s.source = source;
+    s.title = title;
+    s.artist = artist;
+
+    OnlineMusicService svc;
+    std::string err;
+    std::string path = svc.downloadSong(s, "", err);
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(!path.empty());
+    j.key("path").value(path);
+    if (!path.empty() && !err.empty()) j.key("warning").value(err);
+    if (path.empty()) j.key("error").value(err.empty() ? svc.lastError() : err);
+    j.endObject();
+    return okJson(j);
+}
+
 #endif // HAS_MUSIC
 
 Response handleConfigGet(const Request&) {
@@ -819,6 +1014,20 @@ void registerRoutes(Server& server) {
     server.route("GET", "/api/online/sources", handleOnlineSources);
     server.route("GET", "/api/online/search", handleOnlineSearch);
     server.route("GET", "/api/online/resolve", handleOnlineResolve);
+    server.route("POST", "/api/online/download", handleNeteaseDownload);
+
+    // 网易云账号
+    server.route("GET", "/api/netease/account", handleNeteaseAccount);
+    server.route("POST", "/api/netease/login/qr", handleNeteaseQrStart);
+    server.route("GET", "/api/netease/login/poll", handleNeteaseQrPoll);
+    server.route("POST", "/api/netease/logout", handleNeteaseLogout);
+
+    // 歌单 / 排行榜 / 推荐 / 歌词
+    server.route("GET", "/api/netease/playlists", handleNeteasePlaylists);
+    server.route("GET", "/api/netease/playlist/songs", handleNeteasePlaylistSongs);
+    server.route("GET", "/api/netease/toplists", handleNeteaseToplists);
+    server.route("GET", "/api/netease/recommend", handleNeteaseRecommend);
+    server.route("GET", "/api/netease/lyric", handleNeteaseLyric);
 #endif
 
     // 配置

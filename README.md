@@ -91,6 +91,16 @@ testing; the server is single-threaded and binds to loopback by default.
 | GET | `/api/online/sources` | available online sources |
 | GET | `/api/online/search?q=&source=` | online music search |
 | GET | `/api/online/resolve?id=&source=` | resolve a stream URL |
+| POST | `/api/online/download?id=&source=&title=&artist=` | download a song |
+| GET | `/api/netease/account` | current NetEase login state |
+| POST | `/api/netease/login/qr` | start QR login, returns `key` + `url` |
+| GET | `/api/netease/login/poll?key=` | poll QR state (801/802/800/803) |
+| POST | `/api/netease/logout` | clear NetEase session |
+| GET | `/api/netease/playlists` | my playlists (login required) |
+| GET | `/api/netease/playlist/songs?id=` | songs in a playlist |
+| GET | `/api/netease/toplists` | 65 official charts |
+| GET | `/api/netease/recommend` | daily recommendations (login required) |
+| GET | `/api/netease/lyric?id=` | LRC + Chinese translation |
 | GET/POST | `/api/config` | read / update settings |
 | POST | `/api/config/dir/add`, `/api/config/dir/remove` | manage library folders |
 
