@@ -15,13 +15,34 @@ struct OnlineSong {
     std::string streamUrl;    // 直接可播放的地址（可能为空，需 resolve）
     std::string coverUrl;
     std::string lyricText;    // LRC 原文（可能为空）
+    std::string transLyric;   // 中文翻译（可能为空）
     bool previewOnly = false; // iTunes 只有 30 秒试听
+};
+
+// 网易云歌单（含排行榜）
+struct OnlinePlaylist {
+    std::string id;
+    std::string name;
+    int trackCount = 0;
+    std::string coverUrl;
+    std::string creator;
+    bool isToplist = false;
+};
+
+// 网易云账号信息
+struct NeteaseAccount {
+    bool loggedIn = false;
+    std::string userId;
+    std::string nickname;
+    bool vip = false;
 };
 
 class OnlineMusicService {
 public:
+    OnlineMusicService();
+    ~OnlineMusicService();
+
     // 搜索：按音源优先级依次尝试，合并结果
-    // sources 为空表示用默认顺序 {"audius", "itunes"}
     std::vector<OnlineSong> search(const std::string& keyword,
                                    const std::vector<std::string>& sources = {});
 
@@ -29,59 +50,74 @@ public:
     std::string resolveStream(const OnlineSong& song);
 
     // 下载到本地：音频 + 歌词(.lrc) + 封面(.jpg)
-    // outDir 为空则用 exe 同级 downloads/music/
-    // 返回保存的音频文件路径；失败返回空，error 给出原因
     std::string downloadSong(const OnlineSong& song, const std::string& outDir,
                              std::string& error);
 
-    // 把标题+艺术家拼成合法文件名（不含扩展名）
     static std::string makeFileName(const OnlineSong& song);
-
-    // 默认下载目录（exe 同级 downloads/music）
     static std::string defaultDownloadDir();
 
     const std::string& lastError() const { return errMsg; }
 
-    // 可用音源列表（供 UI 显示）
     static std::vector<std::string> availableSources();
 
+    // ==================== 网易云账号 / 歌单 / 排行榜 ====================
+#ifdef HAS_MUSIC
+
+    // ---- 登录 ----
+    // 生成二维码。成功返回 true，qr 里带 key 和 url
+    bool beginQrLogin(std::string& qrKey, std::string& qrUrl, std::string& message);
+    // 轮询扫码状态。code: 801 待扫 / 802 待确认 / 800 过期 / 803 成功
+    bool pollQrLogin(const std::string& qrKey, int& code, std::string& message);
+    // 查询登录态
+    bool account(NeteaseAccount& out);
+    // 退出登录（清 cookie + 删本地文件）
+    void logoutNetease();
+
+    // ---- 歌单 ----
+    bool neteasePlaylists(std::vector<OnlinePlaylist>& out);
+    bool neteasePlaylistSongs(const std::string& playlistId, std::vector<OnlineSong>& out);
+
+    // ---- 排行榜 ----
+    bool neteaseToplists(std::vector<OnlinePlaylist>& out);
+    bool neteaseToplistSongs(const std::string& toplistId, std::vector<OnlineSong>& out);
+
+    // ---- 每日推荐（需登录）----
+    bool neteaseRecommend(std::vector<OnlineSong>& out);
+
+    // ---- 歌词翻译 ----
+    bool neteaseLyricEx(const std::string& songId, std::string& lrc, std::string& translated);
+
+    // ---- cookie 持久化 ----
+    bool loadNeteaseSession();
+    bool saveNeteaseSession();
+    const std::string& neteaseCookie() const;
+
+    // 根据登录状态选择音质：未登录 exhigh(128k)，登录后 lossless
+    std::string preferredLevel() const;
+#endif
+
 #ifdef HAS_LOCAL_MUSIC_API
-    // 本地 NeteaseCloudMusicApi 服务地址（编译期由 CMake 注入）
     static std::string localApiBase();
-
-    // 查找本机可用的 NeteaseCloudMusicApi 安装目录。
-    // 返回 main.js 所在目录；找不到返回空。
-    // 查找顺序：NETEASE_API_HOME 环境变量 → npm 全局目录 → exe 同级 tools/ → 常见路径
     static std::string findLocalApiHome();
-
-    // 探测本地服务是否在线；不在线时尝试自动拉起（每个进程只试一次）
-    // 首次探测失败后本次运行内不再重试（避免每次都等超时）
     bool isLocalApiAvailable();
-
-    // 用本地服务解析真实播放地址（绕过网易云版权限制）
     bool resolveViaLocalApi(const std::string& songId, std::string& outUrl);
-
-    // 用本地服务获取歌词（LRC 文本）
     bool fetchLocalLyric(const std::string& songId, std::string& outLrc);
 #endif
 
 private:
     std::string errMsg;
-    std::string lastError_;   // 供 resolveViaLocalApi / fetchLocalLyric 等辅助函数记录原因
+    std::string lastError_;
 
-    // 原生 eapi 音源（C++ 直连 interface.music.163.com，不需要 Node）
     std::vector<OnlineSong> searchNetease(const std::string& kw, int limit);
-
     std::vector<OnlineSong> searchAudius(const std::string& kw, int limit);
     std::vector<OnlineSong> searchITunes(const std::string& kw, int limit);
     std::vector<OnlineSong> searchMyFreeMP3(const std::string& kw, int limit);
 
 #ifdef HAS_LOCAL_MUSIC_API
     std::vector<OnlineSong> searchLocalApi(const std::string& kw, int limit);
-
-    // 后台启动 node main.js，最多等 waitSeconds 秒
     static bool startLocalApi(const std::string& home, int waitSeconds);
 #endif
+
 };
 
 #endif

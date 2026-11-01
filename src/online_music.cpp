@@ -20,6 +20,19 @@
 
 namespace {
 
+// 进程内共享的网易云 cookie（登录后填充）
+std::string& neteaseCookieStorage() {
+    static std::string cookie;
+    return cookie;
+}
+
+// 会话文件路径：exe 同级 netease_session.json
+inline std::string sessionFilePath() {
+    std::string base = fsutil::exeDir();
+    if (base.empty()) base = ".";
+    return fsutil::join(base, "netease_session.json");
+}
+
 // URL 编码（query 参数用）
 std::string urlEncode(const std::string& s) {
     static const char* hex = "0123456789ABCDEF";
@@ -165,6 +178,7 @@ std::vector<OnlineSong> OnlineMusicService::searchNetease(const std::string& kw,
     std::vector<OnlineSong> out;
 
     netease::EapiClient client;
+    client.setCookie(neteaseCookieStorage());
     std::vector<netease::Song> songs;
     if (!client.search(kw, limit, songs)) {
         if (errMsg.empty()) errMsg = "网易云搜索失败：" + client.lastError();
@@ -182,15 +196,21 @@ std::vector<OnlineSong> OnlineMusicService::searchNetease(const std::string& kw,
         m.coverUrl = s.coverUrl;
 
         // 解析播放地址（失败留空，播放时还会再试一次）
+        // 登录后用 lossless，未登录用 exhigh
         netease::SongUrl u;
-        if (client.songUrl(s.id, 320000, u)) {
-            m.streamUrl = u.url;
+        const char* lv = neteaseCookieStorage().empty() ? "exhigh" : "lossless";
+        if (!client.songUrlEx(s.id, lv, u)) {
+            client.songUrl(s.id, 320000, u);
         }
+        if (!u.url.empty()) m.streamUrl = u.url;
 
         // 歌词只抓前几条，避免拖慢搜索
         if (out.size() < 8) {
-            std::string lrc;
-            if (client.lyric(s.id, lrc)) m.lyricText = lrc;
+            netease::LyricInfo li;
+            if (client.lyricEx(s.id, li)) {
+                m.lyricText = li.lrc;
+                m.transLyric = li.translated;
+            }
         }
 
         out.push_back(std::move(m));
@@ -296,11 +316,18 @@ std::string OnlineMusicService::resolveStream(const OnlineSong& song) {
     // 原生 eapi 音源：搜索结果里没拿到地址时，播放前再解析一次
     if (song.source == "netease") {
         netease::EapiClient client;
+        client.setCookie(neteaseCookieStorage());
         netease::SongUrl u;
-        // 依次降级尝试码率，兼容只有低码率的曲目
-        if (client.songUrl(song.id, 320000, u) ||
-            client.songUrl(song.id, 192000, u) ||
-            client.songUrl(song.id, 128000, u)) {
+
+        // 登录用户优先 lossless，然后逐级降级
+        const char* levels[] = {"lossless", "exhigh", "higher", "standard"};
+        for (const char* lv : levels) {
+            if (client.songUrlEx(song.id, lv, u) && !u.url.empty()) {
+                return u.url;
+            }
+        }
+        // 兜底用老的 br 接口
+        if (client.songUrl(song.id, 128000, u)) {
             return u.url;
         }
         lastError_ = "网易云无可用播放地址（" +
@@ -755,8 +782,9 @@ std::string OnlineMusicService::downloadSong(const OnlineSong& song,
 #ifdef HAS_MUSIC
             if (song.source == "netease") {
                 netease::EapiClient c;
-                std::string got;
-                if (c.lyric(song.id, got)) lrcText = got;
+                c.setCookie(neteaseCookieStorage());
+                netease::LyricInfo li;
+                if (c.lyricEx(song.id, li)) lrcText = li.lrc;
                 else if (!c.lastError().empty()) warn += "歌词：" + c.lastError() + "; ";
             }
 #endif
@@ -833,3 +861,271 @@ std::string OnlineMusicService::downloadSong(const OnlineSong& song,
 
     return audioPath;
 }
+
+// ==================== 网易云账号 / 会话 ====================
+
+#ifdef HAS_MUSIC
+
+namespace {
+} // namespace
+
+OnlineMusicService::OnlineMusicService() {
+    loadNeteaseSession();
+}
+
+OnlineMusicService::~OnlineMusicService() {}
+
+const std::string& OnlineMusicService::neteaseCookie() const {
+    return neteaseCookieStorage();
+}
+
+bool OnlineMusicService::loadNeteaseSession() {
+    std::string path = sessionFilePath();
+    std::string data;
+    if (!fsutil::readAll(path, data)) return false;
+    if (data.empty()) return false;
+
+    minijson::Value root = minijson::parse(data);
+    std::string cookie = root["cookie"].toStringValue();
+    if (cookie.empty()) return false;
+
+    // 用文件句柄保存 cookie，实现类新增了成员变量存放
+    // 这里采用一个技巧：把 cookie 存进 errMsg 附近不方便，
+    // 所以增加一个内部静态存储，进程内共享
+    neteaseCookieStorage() = cookie;
+    return true;
+}
+
+bool OnlineMusicService::saveNeteaseSession() {
+    std::string cookie = neteaseCookieStorage();
+    if (cookie.empty()) {
+        fsutil::removeFile(sessionFilePath());
+        return true;
+    }
+
+    std::string json = "{\"cookie\":\"" + cookie + "\"}";
+    return fsutil::writeAllAtomic(sessionFilePath(), json);
+}
+
+void OnlineMusicService::logoutNetease() {
+    neteaseCookieStorage().clear();
+    fsutil::removeFile(sessionFilePath());
+}
+
+std::string OnlineMusicService::preferredLevel() const {
+    // 登录后可用更高音质
+    return neteaseCookieStorage().empty() ? "exhigh" : "lossless";
+}
+
+bool OnlineMusicService::beginQrLogin(std::string& qrKey, std::string& qrUrl, std::string& message) {
+    qrKey.clear();
+    qrUrl.clear();
+    message.clear();
+
+    netease::EapiClient client;
+    netease::QrLoginState st;
+    if (!client.qrKey(st)) {
+        message = "生成二维码失败：" + client.lastError();
+        return false;
+    }
+    qrKey = st.key;
+    qrUrl = st.url;
+    message = st.message;
+    return true;
+}
+
+bool OnlineMusicService::pollQrLogin(const std::string& qrKey, int& code, std::string& message) {
+    code = 801;
+    message.clear();
+
+    netease::EapiClient client;
+    netease::QrLoginState st;
+    if (!client.qrCheck(qrKey, st)) {
+        message = "查询状态失败：" + client.lastError();
+        return false;
+    }
+    code = st.code;
+    message = st.message;
+
+    if (code == 803) {
+        // 登录成功，保存 cookie
+        neteaseCookieStorage() = client.cookie();
+        saveNeteaseSession();
+    }
+    return true;
+}
+
+bool OnlineMusicService::account(NeteaseAccount& out) {
+    out = NeteaseAccount();
+
+    netease::EapiClient client;
+    client.setCookie(neteaseCookieStorage());
+
+    netease::UserInfo info;
+    if (!client.loginStatus(info)) {
+        errMsg = "查询登录状态失败：" + client.lastError();
+        return false;
+    }
+
+    out.loggedIn = info.valid;
+    out.userId = info.userId;
+    out.nickname = info.nickname;
+    out.vip = info.vip;
+    return true;
+}
+
+// ---- 歌单 ----
+
+bool OnlineMusicService::neteasePlaylists(std::vector<OnlinePlaylist>& out) {
+    out.clear();
+
+    netease::EapiClient client;
+    client.setCookie(neteaseCookieStorage());
+
+    // 先查自己的 userId
+    netease::UserInfo info;
+    if (!client.loginStatus(info) || !info.valid) {
+        errMsg = "未登录，无法查看歌单";
+        return false;
+    }
+
+    std::vector<netease::Playlist> list;
+    if (!client.userPlaylists(info.userId, list)) {
+        errMsg = client.lastError();
+        return false;
+    }
+
+    for (const auto& p : list) {
+        OnlinePlaylist op;
+        op.id = p.id;
+        op.name = p.name;
+        op.trackCount = p.trackCount;
+        op.coverUrl = p.coverUrl;
+        op.creator = p.creator;
+        op.isToplist = false;
+        out.push_back(std::move(op));
+    }
+    return !out.empty();
+}
+
+bool OnlineMusicService::neteasePlaylistSongs(const std::string& playlistId,
+                                               std::vector<OnlineSong>& out) {
+    out.clear();
+
+    netease::EapiClient client;
+    client.setCookie(neteaseCookieStorage());
+
+    std::vector<netease::Song> songs;
+    if (!client.playlistDetail(playlistId, songs)) {
+        errMsg = client.lastError();
+        return false;
+    }
+
+    int lyricCount = 0;
+    for (const auto& s : songs) {
+        OnlineSong m;
+        m.id = s.id;
+        m.title = s.name;
+        m.artist = s.artist;
+        m.album = s.album;
+        m.durationSec = s.durationSec;
+        m.coverUrl = s.coverUrl;
+        m.source = "netease";
+
+        // 只对前 5 首预抓歌词，避免拖慢
+        if (lyricCount < 5) {
+            netease::LyricInfo li;
+            if (client.lyricEx(s.id, li)) {
+                m.lyricText = li.lrc;
+                m.transLyric = li.translated;
+            }
+            lyricCount++;
+        }
+
+        out.push_back(std::move(m));
+    }
+    return !out.empty();
+}
+
+// ---- 排行榜 ----
+
+bool OnlineMusicService::neteaseToplists(std::vector<OnlinePlaylist>& out) {
+    out.clear();
+
+    netease::EapiClient client;
+    std::vector<netease::Playlist> list;
+    if (!client.toplists(list)) {
+        errMsg = client.lastError();
+        return false;
+    }
+
+    for (const auto& p : list) {
+        OnlinePlaylist op;
+        op.id = p.id;
+        op.name = p.name;
+        op.trackCount = p.trackCount;
+        op.coverUrl = p.coverUrl;
+        op.isToplist = true;
+        out.push_back(std::move(op));
+    }
+    return !out.empty();
+}
+
+bool OnlineMusicService::neteaseToplistSongs(const std::string& toplistId,
+                                              std::vector<OnlineSong>& out) {
+    // 排行榜也是歌单的一种
+    return neteasePlaylistSongs(toplistId, out);
+}
+
+// ---- 每日推荐 ----
+
+bool OnlineMusicService::neteaseRecommend(std::vector<OnlineSong>& out) {
+    out.clear();
+
+    netease::EapiClient client;
+    client.setCookie(neteaseCookieStorage());
+
+    if (neteaseCookieStorage().empty()) {
+        errMsg = "需要登录才能获取每日推荐";
+        return false;
+    }
+
+    std::vector<netease::Song> songs;
+    if (!client.recommendSongs(songs)) {
+        errMsg = client.lastError();
+        return false;
+    }
+
+    for (const auto& s : songs) {
+        OnlineSong m;
+        m.id = s.id;
+        m.title = s.name;
+        m.artist = s.artist;
+        m.album = s.album;
+        m.durationSec = s.durationSec;
+        m.coverUrl = s.coverUrl;
+        m.source = "netease";
+        out.push_back(std::move(m));
+    }
+    return !out.empty();
+}
+
+// ---- 歌词翻译 ----
+
+bool OnlineMusicService::neteaseLyricEx(const std::string& songId,
+                                         std::string& lrc, std::string& translated) {
+    lrc.clear();
+    translated.clear();
+
+    netease::EapiClient client;
+    netease::LyricInfo info;
+    if (!client.lyricEx(songId, info)) {
+        errMsg = client.lastError();
+        return false;
+    }
+    lrc = info.lrc;
+    translated = info.translated;
+    return !lrc.empty() || !translated.empty();
+}
+
+#endif // HAS_MUSIC

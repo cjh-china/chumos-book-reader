@@ -59,6 +59,15 @@ The NetEase source talks to `interface.music.163.com` directly over the `eapi`
 protocol, implemented natively in C++ (AES-128-ECB + MD5 via OpenSSL). No Node
 runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 
+- **QR-code login**: press `L` in the online page, open the shown URL on your phone.
+  Session is persisted to `netease_session.json` next to the executable.
+- **My playlists** (`G`): browse, play and download any playlist you own or follow.
+- **Toplists** (`T`): 65 official charts, no login needed.
+- **Daily recommendations** (`R`): personalised, requires login.
+- **Translated lyrics**: both original and Chinese translation are fetched.
+- **Hi-res audio**: after login the client requests `lossless` and falls back through
+  `exhigh` → `higher` → `standard` → 128k MP3 when the account lacks rights.
+
 ### HTTP API test mode (`-DENABLE_API=ON`)
 
 Build with `-DENABLE_API=ON` and run `ebook_reader --serve [--port 8686] [--host 127.0.0.1]`
@@ -196,6 +205,12 @@ Online search page:
 | `a` | Select all / none |
 | `d` / `D` | Download current / all marked |
 | `/` | New search |
+| `L` | NetEase account (QR login / logout) |
+| `G` | My playlists (requires login) |
+| `T` | Toplists (no login needed) |
+| `R` | Daily recommendations (requires login) |
+
+In a playlist or toplist, `Enter` plays the song and `d` downloads it.
 
 ## Runtime files
 
@@ -205,6 +220,7 @@ Created next to the executable:
 |---|---|
 | `downloads/` | Downloaded novels (txt) |
 | `downloads/music/` | Downloaded music (mp3 + lrc + jpg) |
+| `netease_session.json` | NetEase login cookie (git-ignored) |
 | `cache/` | Online playback cache |
 | `ebook_reader.config.json` | Library settings |
 | `music_store.json` | Playlists, favorites, history |

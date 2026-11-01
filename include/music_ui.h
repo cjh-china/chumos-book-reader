@@ -27,6 +27,9 @@ private:
     void drawOnline();
     void drawTagEditor();
     void drawHelp();
+    void drawLogin();
+    void drawNeteasePlaylists();
+    void drawToplists();
 
     // 交互
     void handlePlayerKey(int key);
@@ -34,6 +37,9 @@ private:
     void handlePlaylistKey(int key);
     void handleOnlineKey(int key);
     void handleTagEditorKey(int key);
+    void handleLoginKey(int key);
+    void handleNeteasePlaylistsKey(int key);
+    void handleToplistsKey(int key);
 
     // 操作
     void rescanLibrary();
@@ -48,6 +54,16 @@ private:
     void downloadOnlineMarked();
     void showTagEditor();
     void showSleepTimerDialog();
+
+    // 网易云相关
+    void doQrLogin();
+    void doLogout();
+    void loadNeteasePlaylists();
+    void loadToplists();
+    void loadRecommend();
+    void openNeteasePlaylist(int idx);
+    void openToplist(int idx);
+    void refreshAccount();
 
     std::string fmtTime(double sec) const;
     std::string truncateUtf8(const std::string& s, int maxWidth) const;
@@ -65,8 +81,27 @@ private:
     int libOffset = 0;
 
     // 界面状态
-    enum class Page { Player, Library, Playlists, Online, TagEditor };
+    enum class Page { Player, Library, Playlists, Online, TagEditor, Login, NeteasePlaylists, Toplists };
     Page page = Page::Library;
+
+    // ---- 网易云状态 ----
+    NeteaseAccount account;
+    std::vector<OnlinePlaylist> npList;   // 我的歌单
+    std::vector<OnlinePlaylist> topList;  // 排行榜
+    int npCursor = 0;
+    int tlCursor = 0;
+    bool npDetailMode = false;            // 是否在「歌单内容」里
+    std::string npTitle;
+    std::vector<OnlineSong> npSongs;
+    int npSongCursor = 0;
+    int npSongOffset = 0;
+
+    // 登录
+    std::string loginQrUrl;
+    std::string loginKey;
+    int loginCode = 0;
+    std::string loginMsg;
+    long long loginPollUntilMs = 0;
 
     // 在线搜索
     OnlineMusicService online;

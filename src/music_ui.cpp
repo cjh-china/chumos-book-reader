@@ -736,8 +736,10 @@ void MusicUI::drawOnline() {
 
     if (onlineResults.empty()) {
         tui->drawText(2, 2, "还没有搜索结果。按 / 输入关键词搜索。");
-        tui->drawText(4, 2, "Audius 提供完整曲目（独立音乐人为主）");
-        tui->drawText(5, 2, "iTunes 提供主流歌曲的 30 秒试听");
+        tui->drawText(4, 2, "netease  原生 eapi，128k/无损（登录后）");
+        tui->drawText(5, 2, "Audius   完整曲目（独立音乐人为主）");
+        tui->drawText(6, 2, "iTunes   主流歌曲 30 秒试听");
+        tui->drawText(8, 2, "快捷键：L 账号 | G 我的歌单 | T 排行榜 | R 每日推荐");
         tui->drawText(h - 1, 0, std::string(w, ' '));
         tui->drawText(h - 1, 0, "  / 搜索 | Tab 切页 | q 返回");
         return;
@@ -777,7 +779,7 @@ void MusicUI::drawOnline() {
     tui->drawText(h - 1, 0, std::string(w, ' '));
     std::string hint = "  ↑↓ 选择 | Enter 播放 | 空格/x 标记 | d 下载当前";
     if (markedCount > 0) hint += " | D 下载已选(" + std::to_string(markedCount) + ")";
-    hint += " | / 搜索 | Tab 切页 | q 返回";
+    hint += " | / 搜索 | L 账号 | G 歌单 | T 排行 | R 推荐 | Tab 切页 | q 返回";
     tui->drawText(h - 1, 0, hint);
 }
 
@@ -896,6 +898,25 @@ void MusicUI::handleOnlineKey(int key) {
     if (key == '\t') { page = Page::Player; return; }
     if (key == 27) { page = Page::Library; return; }
     if (key == '/') { doOnlineSearch(); return; }
+
+    // 网易云专属入口
+    if (key == 'L' || key == 'l') { page = Page::Login; return; }
+    if (key == 'G' || key == 'g') {
+        if (!account.loggedIn) { showMessage("请先登录（按 L）", 1500); return; }
+        loadNeteasePlaylists();
+        page = Page::NeteasePlaylists;
+        return;
+    }
+    if (key == 'T' || key == 't') {
+        loadToplists();
+        page = Page::Toplists;
+        return;
+    }
+    if (key == 'R' || key == 'r') {
+        if (!account.loggedIn) { showMessage("请先登录（按 L）", 1500); return; }
+        loadRecommend();
+        return;
+    }
 
 #ifdef PLATFORM_WINDOWS
     if (key == 1000) { if (onlineCursor > 0) onlineCursor--; return; }
@@ -1223,6 +1244,9 @@ void MusicUI::showSleepTimerDialog() {
 void MusicUI::run() {
     running = true;
 
+    // 读取网易云登录态（有 session 文件时自动恢复）
+    refreshAccount();
+
     // 首次进入时若还没有扫描目录，提示添加
     if (store->scanDirs().empty()) {
         rescanLibrary();
@@ -1245,6 +1269,9 @@ void MusicUI::run() {
                 case Page::Playlists: drawPlaylists(); break;
                 case Page::Online: drawOnline(); break;
                 case Page::TagEditor: drawTagEditor(); break;
+                case Page::Login: drawLogin(); break;
+                case Page::NeteasePlaylists: drawNeteasePlaylists(); break;
+                case Page::Toplists: drawToplists(); break;
             }
 
             if (!statusMsg.empty() && nowMs() < statusUntilMs) {
@@ -1262,6 +1289,32 @@ void MusicUI::run() {
 
         player->tick();
 
+        // 登录页自动轮询扫码状态（每 2 秒一次）
+        if (page == Page::Login && !loginKey.empty() && !account.loggedIn) {
+            long long now = nowMs();
+            if (now >= loginPollUntilMs) {
+                loginPollUntilMs = now + 2000;
+                int code = 0;
+                std::string msg;
+                OnlineMusicService svc;
+                if (svc.pollQrLogin(loginKey, code, msg)) {
+                    loginCode = code;
+                    loginMsg = msg;
+                    if (code == 803) {
+                        refreshAccount();
+                        loginKey.clear();
+                        loginQrUrl.clear();
+                        showMessage("登录成功：" + account.nickname, 2000);
+                    } else if (code == 800) {
+                        loginMsg = "二维码已过期，按 R 重新生成";
+                    }
+                } else {
+                    loginMsg = msg;
+                }
+                needRedraw = true;
+            }
+        }
+
         int key = tui->getKey();
         if (key != -1) {
             switch (page) {
@@ -1270,6 +1323,9 @@ void MusicUI::run() {
                 case Page::Playlists: handlePlaylistKey(key); break;
                 case Page::Online: handleOnlineKey(key); break;
                 case Page::TagEditor: handleTagEditorKey(key); break;
+                case Page::Login: handleLoginKey(key); break;
+                case Page::NeteasePlaylists: handleNeteasePlaylistsKey(key); break;
+                case Page::Toplists: handleToplistsKey(key); break;
             }
             needRedraw = true;
             continue;
@@ -1288,4 +1344,402 @@ void MusicUI::run() {
     }
 
     // 退出音乐模块不停止播放（后台继续）
+}
+
+// ==================== 网易云：登录 / 歌单 / 排行榜 ====================
+
+void MusicUI::refreshAccount() {
+    OnlineMusicService svc;
+    if (!svc.account(account)) {
+        account = NeteaseAccount();
+    }
+}
+
+void MusicUI::doQrLogin() {
+    OnlineMusicService svc;
+    loginQrUrl.clear();
+    loginKey.clear();
+    loginCode = 0;
+    loginMsg.clear();
+
+    if (!svc.beginQrLogin(loginKey, loginQrUrl, loginMsg)) {
+        loginMsg = "生成二维码失败";
+        return;
+    }
+    loginCode = 801;
+    loginMsg = "等待扫码";
+    loginPollUntilMs = 0;
+}
+
+void MusicUI::doLogout() {
+    OnlineMusicService svc;
+    svc.logoutNetease();
+    account = NeteaseAccount();
+    npList.clear();
+    topList.clear();
+    npSongs.clear();
+    npDetailMode = false;
+    showMessage("已退出网易云账号");
+}
+
+void MusicUI::loadNeteasePlaylists() {
+    OnlineMusicService svc;
+    if (!svc.neteasePlaylists(npList)) {
+        showMessage("加载歌单失败: " + svc.lastError(), 2000);
+        npList.clear();
+    }
+    npCursor = 0;
+    npDetailMode = false;
+    npSongs.clear();
+}
+
+void MusicUI::loadToplists() {
+    OnlineMusicService svc;
+    if (!svc.neteaseToplists(topList)) {
+        showMessage("加载排行榜失败: " + svc.lastError(), 2000);
+        topList.clear();
+    }
+    tlCursor = 0;
+}
+
+void MusicUI::loadRecommend() {
+    OnlineMusicService svc;
+    if (!svc.neteaseRecommend(npSongs)) {
+        showMessage("加载每日推荐失败: " + svc.lastError(), 2000);
+        return;
+    }
+    npTitle = "每日推荐";
+    npSongCursor = 0;
+    npSongOffset = 0;
+    npDetailMode = true;
+    page = Page::NeteasePlaylists;
+}
+
+void MusicUI::openNeteasePlaylist(int idx) {
+    if (idx < 0 || idx >= (int)npList.size()) return;
+    const auto& p = npList[idx];
+
+    OnlineMusicService svc;
+    tui->clear();
+    tui->drawText(2, 2, "正在加载歌单「" + p.name + "」...");
+    tui->refresh();
+
+    if (!svc.neteasePlaylistSongs(p.id, npSongs)) {
+        showMessage("加载失败: " + svc.lastError(), 2000);
+        return;
+    }
+    npTitle = p.name;
+    npSongCursor = 0;
+    npSongOffset = 0;
+    npDetailMode = true;
+}
+
+void MusicUI::openToplist(int idx) {
+    if (idx < 0 || idx >= (int)topList.size()) return;
+    const auto& p = topList[idx];
+
+    OnlineMusicService svc;
+    tui->clear();
+    tui->drawText(2, 2, "正在加载排行榜「" + p.name + "」...");
+    tui->refresh();
+
+    if (!svc.neteaseToplistSongs(p.id, npSongs)) {
+        showMessage("加载失败: " + svc.lastError(), 2000);
+        return;
+    }
+    npTitle = p.name;
+    npSongCursor = 0;
+    npSongOffset = 0;
+    npDetailMode = true;
+    page = Page::NeteasePlaylists;
+}
+
+// ---- 登录页 ----
+
+void MusicUI::drawLogin() {
+    int h = tui->getHeight();
+    int w = tui->getWidth();
+
+    tui->drawText(0, 0, std::string(w, ' '));
+    tui->drawLine(0, 0, " 网易云账号", w - 1);
+
+    if (account.loggedIn) {
+        tui->drawText(3, 2, "已登录");
+        tui->drawText(5, 4, "昵称: " + (account.nickname.empty() ? "(未知)" : account.nickname));
+        tui->drawText(6, 4, "UID: " + account.userId);
+        tui->drawText(7, 4, account.vip ? "VIP: 是（可用无损音质）" : "VIP: 否");
+        tui->drawText(10, 2, "按 L 退出登录");
+    } else {
+        tui->drawText(3, 2, "未登录");
+        if (loginKey.empty()) {
+            tui->drawText(5, 2, "按 Enter 生成登录二维码");
+            tui->drawText(7, 4, "登录后可解锁：");
+            tui->drawText(8, 6, "· 无损 / Hi-Res 音质");
+            tui->drawText(9, 6, "· 我的歌单");
+            tui->drawText(10, 6, "· 每日推荐");
+        } else {
+            tui->drawText(5, 2, "二维码内容（复制到手机浏览器打开）：");
+            // 长 URL 折行显示
+            int avail = w - 6;
+            std::string url = loginQrUrl;
+            int row = 6;
+            while (!url.empty() && row < 10) {
+                std::string part = truncateUtf8(url, avail);
+                size_t bytes = part.size();
+                tui->drawText(row++, 4, part);
+                url = url.substr(bytes);
+            }
+
+            tui->drawText(12, 2, "状态: " + loginMsg);
+            tui->drawText(13, 2, "扫码后在手机上确认，程序会自动完成登录");
+            tui->drawText(15, 2, "按 R 重新生成二维码");
+        }
+    }
+
+    tui->drawText(h - 1, 0, std::string(w, ' '));
+    tui->drawText(h - 1, 0, "  Esc 返回 | q 退出音乐");
+}
+
+void MusicUI::handleLoginKey(int key) {
+    if (key == 27) { page = Page::Library; return; }
+    if (key == 'q' || key == 'Q') { running = false; return; }
+
+    if (account.loggedIn) {
+        if (key == 'l' || key == 'L') {
+            doLogout();
+        }
+        return;
+    }
+
+    if (key == 13 || key == 10) {
+        doQrLogin();
+        loginPollUntilMs = 0;   // 立即开始轮询
+        return;
+    }
+
+    if ((key == 'r' || key == 'R') && !loginKey.empty()) {
+        doQrLogin();
+        return;
+    }
+}
+
+// ---- 歌单页 ----
+
+void MusicUI::drawNeteasePlaylists() {
+    int h = tui->getHeight();
+    int w = tui->getWidth();
+
+    if (npDetailMode) {
+        // 显示歌单内容
+        std::string hdr = " " + npTitle + "  (" + std::to_string(npSongs.size()) + " 首)";
+        tui->drawText(0, 0, std::string(w, ' '));
+        tui->drawLine(0, 0, hdr, w - 1);
+
+        if (npSongs.empty()) {
+            tui->drawText(2, 2, "歌单为空");
+            tui->drawText(h - 1, 0, std::string(w, ' '));
+            tui->drawText(h - 1, 0, "  Esc 返回歌单列表 | q 退出");
+            return;
+        }
+
+        int listH = h - 2;
+        if (npSongCursor < npSongOffset) npSongOffset = npSongCursor;
+        if (npSongCursor >= npSongOffset + listH) npSongOffset = npSongCursor - listH + 1;
+        if (npSongOffset < 0) npSongOffset = 0;
+
+        for (int i = 0; i < listH; i++) {
+            int row = 1 + i;
+            int idx = npSongOffset + i;
+            tui->drawText(row, 0, std::string(w, ' '));
+            if (idx >= (int)npSongs.size()) continue;
+
+            const OnlineSong& s = npSongs[idx];
+            bool sel = (idx == npSongCursor);
+
+            std::string mark = sel ? "> " : "  ";
+            std::string line = mark + s.title + "  -  " + s.artist;
+            line = truncateUtf8(line, w - 16);
+            tui->drawLine(row, 1, line, w - 16);
+
+            std::string right = fmtTime(s.durationSec) + " ";
+            int rx = w - displayWidth(right) - 1;
+            if (rx > 10) tui->drawText(row, rx, right);
+        }
+
+        tui->drawText(h - 1, 0, std::string(w, ' '));
+        tui->drawText(h - 1, 0, "  ↑↓ 选择 | Enter 播放 | d 下载 | Esc 返回 | q 退出");
+        return;
+    }
+
+    // 歌单列表
+    std::string hdr = " 我的歌单  (" + std::to_string(npList.size()) + ")";
+    tui->drawText(0, 0, std::string(w, ' '));
+    tui->drawLine(0, 0, hdr, w - 1);
+
+    if (npList.empty()) {
+        tui->drawText(2, 2, "没有歌单");
+        if (!account.loggedIn) {
+            tui->drawText(4, 2, "登录后才能查看歌单，按 L 去登录");
+        }
+        tui->drawText(h - 1, 0, std::string(w, ' '));
+        tui->drawText(h - 1, 0, "  r 刷新 | Esc 返回 | q 退出");
+        return;
+    }
+
+    int listH = h - 2;
+    for (int i = 0; i < listH; i++) {
+        int row = 1 + i;
+        int idx = i;
+        tui->drawText(row, 0, std::string(w, ' '));
+        if (idx >= (int)npList.size()) continue;
+
+        const OnlinePlaylist& p = npList[idx];
+        bool sel = (idx == npCursor);
+
+        std::string mark = sel ? "> " : "  ";
+        std::string line = mark + p.name + "  (" + std::to_string(p.trackCount) + " 首)";
+        line = truncateUtf8(line, w - 2);
+        tui->drawLine(row, 1, line, w - 2);
+    }
+
+    tui->drawText(h - 1, 0, std::string(w, ' '));
+    tui->drawText(h - 1, 0, "  ↑↓ 选择 | Enter 打开 | r 刷新 | Esc 返回");
+}
+
+void MusicUI::handleNeteasePlaylistsKey(int key) {
+    int h = tui->getHeight();
+
+    if (key == 'q' || key == 'Q') { running = false; return; }
+
+    if (npDetailMode) {
+        if (key == 27) {
+            npDetailMode = false;
+            return;
+        }
+#ifdef PLATFORM_WINDOWS
+        if (key == 1000) { if (npSongCursor > 0) npSongCursor--; return; }
+        if (key == 1001) { if (npSongCursor + 1 < (int)npSongs.size()) npSongCursor++; return; }
+#else
+        if (key == KEY_UP) { if (npSongCursor > 0) npSongCursor--; return; }
+        if (key == KEY_DOWN) { if (npSongCursor + 1 < (int)npSongs.size()) npSongCursor++; return; }
+#endif
+        if (key == 13 || key == 10) {
+            if (npSongCursor >= 0 && npSongCursor < (int)npSongs.size()) {
+                // 播放选中的歌
+                OnlineSong s = npSongs[npSongCursor];
+                // 先解析播放地址
+                OnlineMusicService svc;
+                std::string url = svc.resolveStream(s);
+                if (url.empty()) {
+                    showMessage("无法播放: " + svc.lastError(), 2000);
+                    return;
+                }
+                s.streamUrl = url;
+
+                std::string err;
+                std::string path = svc.downloadSong(s, "", err);
+                if (path.empty()) {
+                    showMessage("下载失败: " + err, 2000);
+                    return;
+                }
+
+                // 加入曲库并播放
+                rescanLibrary();
+                int target = -1;
+                for (size_t i = 0; i < library.size(); i++) {
+                    if (library[i].path == path) { target = i; break; }
+                }
+                if (target >= 0) {
+                    libCursor = target;
+                    playSelected();
+                } else {
+                    showMessage("已下载但未找到: " + path, 2000);
+                }
+            }
+            return;
+        }
+        if (key == 'd') {
+            if (npSongCursor >= 0 && npSongCursor < (int)npSongs.size()) {
+                OnlineSong s = npSongs[npSongCursor];
+                OnlineMusicService svc;
+                std::string err;
+                std::string path = svc.downloadSong(s, "", err);
+                if (path.empty()) {
+                    showMessage("下载失败: " + err, 2000);
+                } else {
+                    showMessage("已下载: " + path, 1500);
+                    rescanLibrary();
+                }
+            }
+            return;
+        }
+        return;
+    }
+
+    // 列表模式
+    if (key == 27) { page = Page::Library; return; }
+    if (key == 'r' || key == 'R') { loadNeteasePlaylists(); return; }
+
+#ifdef PLATFORM_WINDOWS
+    if (key == 1000) { if (npCursor > 0) npCursor--; return; }
+    if (key == 1001) { if (npCursor + 1 < (int)npList.size()) npCursor++; return; }
+#else
+    if (key == KEY_UP) { if (npCursor > 0) npCursor--; return; }
+    if (key == KEY_DOWN) { if (npCursor + 1 < (int)npList.size()) npCursor++; return; }
+#endif
+
+    if (key == 13 || key == 10) { openNeteasePlaylist(npCursor); return; }
+}
+
+// ---- 排行榜页 ----
+
+void MusicUI::drawToplists() {
+    int h = tui->getHeight();
+    int w = tui->getWidth();
+
+    std::string hdr = " 排行榜  (" + std::to_string(topList.size()) + ")";
+    tui->drawText(0, 0, std::string(w, ' '));
+    tui->drawLine(0, 0, hdr, w - 1);
+
+    if (topList.empty()) {
+        tui->drawText(2, 2, "没有排行榜数据");
+        tui->drawText(h - 1, 0, std::string(w, ' '));
+        tui->drawText(h - 1, 0, "  r 刷新 | Esc 返回");
+        return;
+    }
+
+    int listH = h - 2;
+    for (int i = 0; i < listH; i++) {
+        int row = 1 + i;
+        int idx = i;
+        tui->drawText(row, 0, std::string(w, ' '));
+        if (idx >= (int)topList.size()) continue;
+
+        const OnlinePlaylist& p = topList[idx];
+        bool sel = (idx == tlCursor);
+
+        std::string mark = sel ? "> " : "  ";
+        std::string line = mark + p.name + "  (" + std::to_string(p.trackCount) + " 首)";
+        line = truncateUtf8(line, w - 2);
+        tui->drawLine(row, 1, line, w - 2);
+    }
+
+    tui->drawText(h - 1, 0, std::string(w, ' '));
+    tui->drawText(h - 1, 0, "  ↑↓ 选择 | Enter 打开 | r 刷新 | Esc 返回");
+}
+
+void MusicUI::handleToplistsKey(int key) {
+    if (key == 'q' || key == 'Q') { running = false; return; }
+    if (key == 27) { page = Page::Library; return; }
+    if (key == 'r' || key == 'R') { loadToplists(); return; }
+
+#ifdef PLATFORM_WINDOWS
+    if (key == 1000) { if (tlCursor > 0) tlCursor--; return; }
+    if (key == 1001) { if (tlCursor + 1 < (int)topList.size()) tlCursor++; return; }
+#else
+    if (key == KEY_UP) { if (tlCursor > 0) tlCursor--; return; }
+    if (key == KEY_DOWN) { if (tlCursor + 1 < (int)topList.size()) tlCursor++; return; }
+#endif
+
+    if (key == 13 || key == 10) { openToplist(tlCursor); return; }
 }

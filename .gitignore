@@ -30,6 +30,7 @@ downloads/
 cache/
 ebook_reader.config.json
 music_store.json
+netease_session.json
 
 # ===== 日志 =====
 *.log
