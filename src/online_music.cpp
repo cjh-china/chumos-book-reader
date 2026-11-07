@@ -11,11 +11,15 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <mutex>
 #include <thread>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <wincrypt.h>
+#else
+#include <sys/stat.h>
 #endif
 
 namespace {
@@ -26,11 +30,245 @@ std::string& neteaseCookieStorage() {
     return cookie;
 }
 
-// 会话文件路径：exe 同级 netease_session.json
+std::mutex& neteaseCookieMutex() {
+    static std::mutex mu;
+    return mu;
+}
+
+// 会话存放目录。旧版放在 exe 同级，换构建目录/重新编译就会掉登录，
+// 因此改为稳定的用户目录；EBOOK_READER_HOME 可覆盖，便于测试隔离。
+std::string userDataDir() {
+    const char* overrideDir = std::getenv("EBOOK_READER_HOME");
+    if (overrideDir && *overrideDir) return overrideDir;
+#ifdef _WIN32
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata && *appdata) return fsutil::join(appdata, "ebook_reader");
+    std::string base = fsutil::exeDir();
+    return base.empty() ? std::string(".") : base;
+#else
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    if (xdg && *xdg) return fsutil::join(xdg, "ebook_reader");
+    const char* home = std::getenv("HOME");
+    if (home && *home) return fsutil::join(fsutil::join(home, ".config"), "ebook_reader");
+    return ".";
+#endif
+}
+
 inline std::string sessionFilePath() {
+    return fsutil::join(userDataDir(), "netease_session.json");
+}
+
+// 旧版本会话文件（exe 同级），只读兼容，迁移成功后删除明文残留
+inline std::string legacySessionFilePath() {
     std::string base = fsutil::exeDir();
     if (base.empty()) base = ".";
     return fsutil::join(base, "netease_session.json");
+}
+
+std::string jsonEscape(const std::string& s) {
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.reserve(s.size() + 16);
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (c < 0x20) {
+                    out += "\\u00";
+                    out += hex[c >> 4];
+                    out += hex[c & 0x0F];
+                } else {
+                    out += (char)c;
+                }
+        }
+    }
+    return out;
+}
+
+std::string base64Encode(const std::string& in) {
+    static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 3 <= in.size(); i += 3) {
+        unsigned v = ((unsigned char)in[i] << 16) |
+                     ((unsigned char)in[i + 1] << 8) |
+                     (unsigned char)in[i + 2];
+        out += tbl[(v >> 18) & 63];
+        out += tbl[(v >> 12) & 63];
+        out += tbl[(v >> 6) & 63];
+        out += tbl[v & 63];
+    }
+    size_t rem = in.size() - i;
+    if (rem) {
+        unsigned v = (unsigned char)in[i] << 16;
+        if (rem == 2) v |= (unsigned char)in[i + 1] << 8;
+        out += tbl[(v >> 18) & 63];
+        out += tbl[(v >> 12) & 63];
+        out += rem == 2 ? tbl[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+// 会话文件里 DPAPI blob 的解码（与后面音频用的 base64Decode 分开，避免命名冲突）
+std::string sessionBase64Decode(const std::string& in) {
+    static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int rev[256];
+    for (int i = 0; i < 256; i++) rev[i] = -1;
+    for (int i = 0; i < 64; i++) rev[(unsigned char)tbl[i]] = i;
+    std::string out;
+    int buf = 0, bits = 0;
+    for (unsigned char c : in) {
+        if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
+        int v = rev[c];
+        if (v < 0) continue;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += (char)((buf >> bits) & 0xFF);
+        }
+    }
+    return out;
+}
+
+#ifdef _WIN32
+// 用当前 Windows 用户的 DPAPI 保护 cookie，避免明文凭据落在磁盘上
+bool dpapiProtect(const std::string& plain, std::string& outBlob) {
+    DATA_BLOB in = {(DWORD)plain.size(), (BYTE*)plain.data()};
+    DATA_BLOB out = {0, nullptr};
+    if (!CryptProtectData(&in, L"ebook_reader netease session", nullptr, nullptr,
+                          nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return false;
+    outBlob.assign((const char*)out.pbData, out.cbData);
+    LocalFree(out.pbData);
+    return true;
+}
+
+bool dpapiUnprotect(const std::string& blob, std::string& outPlain) {
+    DATA_BLOB in = {(DWORD)blob.size(), (BYTE*)blob.data()};
+    DATA_BLOB out = {0, nullptr};
+    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr,
+                            CRYPTPROTECT_UI_FORBIDDEN, &out)) return false;
+    outPlain.assign((const char*)out.pbData, out.cbData);
+    LocalFree(out.pbData);
+    return true;
+}
+#endif
+
+bool cookieHasKey(const std::string& c, const char* key) {
+    std::string k = std::string(key) + "=";
+    size_t p = c.find(k);
+    while (p != std::string::npos) {
+        if (p == 0 || c[p - 1] == ';' || c[p - 1] == ' ') return true;
+        p = c.find(k, p + 1);
+    }
+    return false;
+}
+
+// 只有含登录态字段的 cookie 才值得落盘；匿名请求返回的 NMTID 之类不算会话
+bool hasAuthCookie(const std::string& c) {
+    return cookieHasKey(c, "MUSIC_U") || cookieHasKey(c, "MUSIC_A");
+}
+
+bool writeSessionFile(const std::string& cookie) {
+    std::string path = sessionFilePath();
+    std::string legacy = legacySessionFilePath();
+
+    if (cookie.empty()) {
+        fsutil::removeFile(path);
+        if (legacy != path) fsutil::removeFile(legacy);
+        return true;
+    }
+
+    long long savedAt = (long long)std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+#ifdef _WIN32
+    std::string blob;
+    bool protectedOk = dpapiProtect(cookie, blob);
+#else
+    bool protectedOk = false;
+#endif
+
+    std::string json = "{\"version\":2,\"protected\":";
+    json += protectedOk ? "true" : "false";
+    json += ",\"saved_at\":" + std::to_string(savedAt) + ",";
+    if (protectedOk) json += "\"data\":\"" + base64Encode(blob) + "\"";
+    else json += "\"cookie\":\"" + jsonEscape(cookie) + "\"";
+    json += "}\n";
+
+    std::string dir = userDataDir();
+    if (!fsutil::isDirectory(dir)) fsutil::createDirs(dir);
+    if (!fsutil::writeAllAtomic(path, json)) return false;
+#ifndef _WIN32
+    ::chmod(path.c_str(), 0600);
+#endif
+    // 迁移完成：删掉旧版 exe 目录下的明文文件，避免凭据残留
+    if (legacy != path) fsutil::removeFile(legacy);
+    return true;
+}
+
+bool readSessionFile(std::string& cookie) {
+    cookie.clear();
+    std::string path = sessionFilePath();
+    std::string data;
+    if (!fsutil::readAll(path, data) || data.empty()) {
+        std::string legacy = legacySessionFilePath();
+        if (legacy == path || !fsutil::readAll(legacy, data) || data.empty()) return false;
+    }
+
+    minijson::Value root = minijson::parse(data);
+    std::string raw;
+    if (root["protected"].asBool() || root.has("data")) {
+#ifdef _WIN32
+        if (!dpapiUnprotect(sessionBase64Decode(root["data"].asString()), raw)) return false;
+#else
+        return false;   // Windows 生成的受保护会话在非 Windows 上无法解开
+#endif
+    } else {
+        raw = root["cookie"].toStringValue();
+    }
+    if (!hasAuthCookie(raw)) return false;   // 拒绝损坏 / 只含匿名字段的会话
+    cookie = raw;
+    return true;
+}
+
+// 只在一个进程里加载一次。--serve 模式下每个请求都会构造 OnlineMusicService，
+// 若每次都从磁盘覆盖内存，刚刚被服务端轮换过的 cookie 会被旧文件冲掉。
+bool ensureSessionLoaded() {
+    static std::once_flag once;
+    static bool ok = false;
+    static std::mutex mu;
+    std::call_once(once, [&]() {
+        std::string cookie;
+        if (readSessionFile(cookie)) {
+            std::lock_guard<std::mutex> lock(mu);
+            if (neteaseCookieStorage().empty()) neteaseCookieStorage() = cookie;
+            ok = true;
+        }
+    });
+    return ok;
+}
+
+// 注册给 EapiClient：任何请求合并了 Set-Cookie 之后自动回写磁盘
+void onCookieUpdated(const std::string& cookie) {
+    if (!hasAuthCookie(cookie)) return;
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(neteaseCookieMutex());
+        if (neteaseCookieStorage() != cookie) {
+            neteaseCookieStorage() = cookie;
+            changed = true;
+        }
+    }
+    if (changed) writeSessionFile(cookie);
 }
 
 // URL 编码（query 参数用）
@@ -870,6 +1108,11 @@ namespace {
 } // namespace
 
 OnlineMusicService::OnlineMusicService() {
+    // 全局只注册一次：让 EapiClient 把服务端轮换后的 Set-Cookie 自动落盘
+    static std::once_flag hookFlag;
+    std::call_once(hookFlag, []() {
+        netease::EapiClient::setCookieUpdateHook(&onCookieUpdated);
+    });
     loadNeteaseSession();
 }
 
@@ -879,37 +1122,50 @@ const std::string& OnlineMusicService::neteaseCookie() const {
     return neteaseCookieStorage();
 }
 
+std::string OnlineMusicService::sessionPath() {
+    return sessionFilePath();
+}
+
+bool OnlineMusicService::sessionPersisted() {
+    return fsutil::isFile(sessionFilePath()) || fsutil::isFile(legacySessionFilePath());
+}
+
 bool OnlineMusicService::loadNeteaseSession() {
-    std::string path = sessionFilePath();
-    std::string data;
-    if (!fsutil::readAll(path, data)) return false;
-    if (data.empty()) return false;
-
-    minijson::Value root = minijson::parse(data);
-    std::string cookie = root["cookie"].toStringValue();
-    if (cookie.empty()) return false;
-
-    // 用文件句柄保存 cookie，实现类新增了成员变量存放
-    // 这里采用一个技巧：把 cookie 存进 errMsg 附近不方便，
-    // 所以增加一个内部静态存储，进程内共享
-    neteaseCookieStorage() = cookie;
-    return true;
+    return ensureSessionLoaded();
 }
 
 bool OnlineMusicService::saveNeteaseSession() {
-    std::string cookie = neteaseCookieStorage();
-    if (cookie.empty()) {
-        fsutil::removeFile(sessionFilePath());
-        return true;
+    std::string cookie;
+    {
+        std::lock_guard<std::mutex> lock(neteaseCookieMutex());
+        cookie = neteaseCookieStorage();
     }
-
-    std::string json = "{\"cookie\":\"" + cookie + "\"}";
-    return fsutil::writeAllAtomic(sessionFilePath(), json);
+    return writeSessionFile(cookie);
 }
 
 void OnlineMusicService::logoutNetease() {
-    neteaseCookieStorage().clear();
-    fsutil::removeFile(sessionFilePath());
+    {
+        std::lock_guard<std::mutex> lock(neteaseCookieMutex());
+        neteaseCookieStorage().clear();
+    }
+    writeSessionFile("");
+}
+
+bool OnlineMusicService::importNeteaseCookie(const std::string& rawCookie) {
+    netease::EapiClient client;
+    if (!client.importCookieFromBrowser(rawCookie)) {
+        errMsg = client.lastError();
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(neteaseCookieMutex());
+        neteaseCookieStorage() = client.cookie();
+    }
+    if (!saveNeteaseSession()) {
+        errMsg = "Cookie 已导入，但写入会话文件失败：" + sessionFilePath();
+        return false;
+    }
+    return true;
 }
 
 std::string OnlineMusicService::preferredLevel() const {
@@ -948,8 +1204,11 @@ bool OnlineMusicService::pollQrLogin(const std::string& qrKey, int& code, std::s
     message = st.message;
 
     if (code == 803) {
-        // 登录成功，保存 cookie
-        neteaseCookieStorage() = client.cookie();
+        // 登录成功，保存 cookie（EapiClient 的更新回调也会触发一次，幂等）
+        {
+            std::lock_guard<std::mutex> lock(neteaseCookieMutex());
+            neteaseCookieStorage() = client.cookie();
+        }
         saveNeteaseSession();
     }
     return true;

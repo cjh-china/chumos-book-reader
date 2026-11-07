@@ -1,6 +1,7 @@
 #ifndef NETEASE_API_H
 #define NETEASE_API_H
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,17 @@ public:
     void setCookie(const std::string& c) { cookie_ = c; }
     const std::string& cookie() const { return cookie_; }
     bool loggedIn() const { return !cookie_.empty(); }
+
+    // 从浏览器复制的完整 Cookie 字符串导入（支持 "key=val; key2=val2" 格式）
+    // 会自动提取 MUSIC_A/MUSIC_U/MUSIC_A_T/MUSIC_R_T/__csrf/NMTID 等关键字段，
+    // 并要求至少包含一个登录态字段（MUSIC_U 或 MUSIC_A）。
+    bool importCookieFromBrowser(const std::string& rawCookie);
+
+    // 注册「响应 Set-Cookie 合并后」的回调。服务端会轮换 __csrf / MUSIC_U，
+    // 若只在内存里更新而不回写磁盘，重启后会话就失效了。
+    // 进程全局唯一，传 nullptr 可取消。
+    using CookieUpdateHook = std::function<void(const std::string&)>;
+    static void setCookieUpdateHook(CookieUpdateHook hook);
 
     const std::string& lastError() const { return err_; }
 

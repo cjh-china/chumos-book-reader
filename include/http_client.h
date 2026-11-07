@@ -3,6 +3,7 @@
 
 #include <string>
 #include <map>
+#include <vector>
 
 // 轻量 HTTP 客户端（基于 libcurl）。
 // 失败时 get/post 返回空串，可通过 lastError() 获取具体原因
@@ -23,6 +24,9 @@ public:
     // 最近一次响应的 HTTP 状态码；未拿到响应时为 0
     long lastStatus() const { return lastStatus_; }
 
+    // 最近一次响应里的全部 Set-Cookie 值（原样保留，未拆分）
+    const std::vector<std::string>& lastSetCookies() const { return setCookies_; }
+
 private:
     // 记录一次失败：curlResult 为 0（CURLE_OK）表示传输成功，此时只看 HTTP 状态
     void recordFailure(const char* method, const std::string& url, int curlResult, long httpCode);
@@ -31,6 +35,7 @@ private:
     int timeout;
     std::string lastError_;
     long lastStatus_ = 0;
+    std::vector<std::string> setCookies_;
 };
 
 #endif

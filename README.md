@@ -60,7 +60,13 @@ protocol, implemented natively in C++ (AES-128-ECB + MD5 via OpenSSL). No Node
 runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 
 - **QR-code login**: press `L` in the online page, open the shown URL on your phone.
-  Session is persisted to `netease_session.json` next to the executable.
+- **Cookie import**: press `I` on the account page and paste a browser Cookie header,
+  or `POST /api/netease/login/cookie` with `{"cookie": "..."}`.
+  `tools/netease_edge_cookie.py` can extract and decrypt an existing Edge session.
+- **Session storage**: `%APPDATA%\ebook_reader\netease_session.json` on Windows,
+  `$XDG_CONFIG_HOME/ebook_reader/` on Unix (override with `EBOOK_READER_HOME`).
+  The cookie is DPAPI-protected on Windows and survives rebuilding/reinstalling.
+  A legacy exe-local `netease_session.json` is migrated automatically on first use.
 - **My playlists** (`G`): browse, play and download any playlist you own or follow.
 - **Toplists** (`T`): 65 official charts, no login needed.
 - **Daily recommendations** (`R`): personalised, requires login.
@@ -95,6 +101,7 @@ testing; the server is single-threaded and binds to loopback by default.
 | GET | `/api/netease/account` | current NetEase login state |
 | POST | `/api/netease/login/qr` | start QR login, returns `key` + `url` |
 | GET | `/api/netease/login/poll?key=` | poll QR state (801/802/800/803) |
+| POST | `/api/netease/login/cookie` | import a browser Cookie header (`{"cookie":"..."}`) |
 | POST | `/api/netease/logout` | clear NetEase session |
 | GET | `/api/netease/playlists` | my playlists (login required) |
 | GET | `/api/netease/playlist/songs?id=` | songs in a playlist |
@@ -230,7 +237,7 @@ Created next to the executable:
 |---|---|
 | `downloads/` | Downloaded novels (txt) |
 | `downloads/music/` | Downloaded music (mp3 + lrc + jpg) |
-| `netease_session.json` | NetEase login cookie (git-ignored) |
+| `netease_session.json` | NetEase login cookie — now under the user data dir (see above), DPAPI-protected; git-ignored |
 | `cache/` | Online playback cache |
 | `ebook_reader.config.json` | Library settings |
 | `music_store.json` | Playlists, favorites, history |

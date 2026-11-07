@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <mutex>
 #include <random>
 
 namespace netease {
@@ -21,6 +22,25 @@ const char* kEapiKey = "e82ckenh8dichen8";
 const char* kApiHost = "https://interface.music.163.com";
 const char* kApiUserAgent =
     "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)";
+
+// 由 OnlineMusicService 注册，用于把服务端轮换后的 Cookie 回写磁盘
+std::mutex& cookieHookMutex() {
+    static std::mutex mu;
+    return mu;
+}
+EapiClient::CookieUpdateHook& cookieHook() {
+    static EapiClient::CookieUpdateHook hook;
+    return hook;
+}
+
+void notifyCookieUpdate(const std::string& cookie) {
+    EapiClient::CookieUpdateHook h;
+    {
+        std::lock_guard<std::mutex> lock(cookieHookMutex());
+        h = cookieHook();
+    }
+    if (h) h(cookie);
+}
 
 std::string md5Hex(const std::string& s) {
     unsigned char out[16];
@@ -99,6 +119,26 @@ std::string jsonEscape(const std::string& s) {
     return out;
 }
 
+// 从 "a=1; b=2" 格式的 cookie 串里取出某个 key 的值
+std::string cookieValue(const std::string& cookie, const char* key) {
+    std::string k = std::string(key) + "=";
+    size_t p = cookie.find(k);
+    while (p != std::string::npos) {
+        // 确保是完整的 key（前面是开头、分号或空格）
+        bool boundary = (p == 0) || cookie[p - 1] == ';' || cookie[p - 1] == ' ';
+        if (boundary) {
+            size_t start = p + k.size();
+            size_t end = cookie.find(';', start);
+            if (end == std::string::npos) end = cookie.size();
+            std::string v = cookie.substr(start, end - start);
+            while (!v.empty() && (v.back() == ' ' || v.back() == '\r' || v.back() == '\n')) v.pop_back();
+            return v;
+        }
+        p = cookie.find(k, p + 1);
+    }
+    return "";
+}
+
 // URL 编码（用于 cookie 值）
 std::string urlEncode(const std::string& s) {
     static const char* hex = "0123456789ABCDEF";
@@ -121,6 +161,11 @@ EapiClient::EapiClient() {
     userAgent_ = kApiUserAgent;
 }
 
+void EapiClient::setCookieUpdateHook(CookieUpdateHook hook) {
+    std::lock_guard<std::mutex> lock(cookieHookMutex());
+    cookieHook() = std::move(hook);
+}
+
 std::string EapiClient::encryptParams(const std::string& uri, const std::string& jsonText) {
     std::string message = "nobody" + uri + "use" + jsonText + "md5forencrypt";
     std::string digest = md5Hex(message);
@@ -131,13 +176,26 @@ std::string EapiClient::encryptParams(const std::string& uri, const std::string&
 std::string EapiClient::buildHeaderJson(const std::string& deviceId,
                                          const std::string& buildver,
                                          const std::string& requestId) const {
-    return "{\"osver\":\"16.2\",\"deviceId\":\"" + deviceId +
-           "\",\"os\":\"iPhone OS\",\"appver\":\"9.0.90\","
-           "\"versioncode\":\"140\",\"mobilename\":\"\","
-           "\"buildver\":\"" + buildver + "\","
-           "\"resolution\":\"1920x1080\",\"__csrf\":\"\","
-           "\"channel\":\"distribution\",\"requestId\":\"" + requestId + "\","
-           "\"MUSIC_A\":\"" + cookie_ + "\"}";
+    std::string musicA = cookieValue(cookie_, "MUSIC_A");
+    std::string csrf = cookieValue(cookie_, "__csrf");
+    std::string out =
+        "{\"osver\":\"16.2\",\"deviceId\":\"" + deviceId +
+        "\",\"os\":\"iPhone OS\",\"appver\":\"9.0.90\","
+        "\"versioncode\":\"140\",\"mobilename\":\"\","
+        "\"buildver\":\"" + buildver + "\","
+        "\"resolution\":\"1920x1080\",\"__csrf\":\"" + csrf + "\","
+        "\"channel\":\"distribution\",\"requestId\":\"" + requestId + "\","
+        "\"MUSIC_A\":\"" + musicA + "\"";
+
+    // 新版网页端登录态在 MUSIC_U / MUSIC_A_T / MUSIC_R_T 上，
+    // eapi 的加密 header 里也必须带上，否则服务端按匿名请求处理。
+    const char* extras[] = {"MUSIC_U", "MUSIC_A_T", "MUSIC_R_T"};
+    for (const char* k : extras) {
+        std::string v = cookieValue(cookie_, k);
+        if (v.empty()) continue;
+        out += std::string(",\"") + k + "\":\"" + v + "\"";
+    }
+    return out + "}";
 }
 
 std::string EapiClient::buildCookieHeader() const {
@@ -153,10 +211,26 @@ std::string EapiClient::buildCookieHeader() const {
         "; mobilename="
         "; buildver=" + buildver +
         "; resolution=1920x1080"
-        "; __csrf="
-        "; channel=distribution"
-        "; MUSIC_A=" + cookie_;
+        "; channel=distribution";
+
+    // cookie_ 本身已经是 "MUSIC_U=xxx; __csrf=yyy" 格式，整体拼上去。
+    // 注意不要在固定段里再拼一次 __csrf，否则请求头会出现两个同名键，
+    // 服务端取值不一致时会导致 csrf 校验失败。
+    if (!cookie_.empty()) {
+        c += "; " + cookie_;
+        if (cookieValue(cookie_, "__csrf").empty()) c += "; __csrf=";
+    } else {
+        c += "; MUSIC_A=; __csrf=";
+    }
+
     return c;
+}
+
+// 从 "a=1; Path=/; Domain=.music.163.com" 里取 "a=1"
+std::string cookiePairFromSetCookie(const std::string& setCookie) {
+    size_t end = setCookie.find(';');
+    if (end == std::string::npos) return setCookie;
+    return setCookie.substr(0, end);
 }
 
 std::string EapiClient::request(const std::string& uri, const std::string& jsonText, int timeoutSec) {
@@ -205,6 +279,51 @@ std::string EapiClient::request(const std::string& uri, const std::string& jsonT
         if (!client.lastError().empty()) err_ += "：" + client.lastError();
         return "";
     }
+
+    // 扫码登录成功后，cookie 在响应的 Set-Cookie 头里，不在 body 里。
+    // 把这些 cookie 合并进 cookie_，后续请求就能带着它。
+    const auto& sc = client.lastSetCookies();
+    if (!sc.empty()) {
+        std::string merged = cookie_;
+        for (const auto& line : sc) {
+            std::string pair = cookiePairFromSetCookie(line);
+            if (pair.empty()) continue;
+
+            // 解析 key，替换已有同名项
+            size_t eq = pair.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = pair.substr(0, eq);
+
+            std::string newCookie;
+            size_t p = 0;
+            bool replaced = false;
+            while (p < merged.size()) {
+                size_t next = merged.find("; ", p);
+                std::string item = (next == std::string::npos)
+                                       ? merged.substr(p)
+                                       : merged.substr(p, next - p);
+                size_t e2 = item.find('=');
+                if (e2 != std::string::npos && item.substr(0, e2) == key) {
+                    item = pair;
+                    replaced = true;
+                }
+                if (!newCookie.empty()) newCookie += "; ";
+                newCookie += item;
+                if (next == std::string::npos) break;
+                p = next + 2;
+            }
+            if (!replaced) {
+                if (!newCookie.empty()) newCookie += "; ";
+                newCookie += pair;
+            }
+            merged = newCookie;
+        }
+        // 服务端可能通过 Set-Cookie 轮换 __csrf / MUSIC_U 等字段。
+        // 通知上层把新值持久化，否则本次进程内有效、重启就掉登录。
+        cookie_ = merged;
+        notifyCookieUpdate(cookie_);
+    }
+
     return resp;
 }
 
@@ -213,10 +332,12 @@ bool EapiClient::parseSongs(const std::string& resp, std::vector<Song>& out) {
     const minijson::Value& songs = root["songs"];
     const minijson::Value& data = root["data"];
     const minijson::Value& playlist = root["playlist"]["tracks"];
+    const minijson::Value& recommend = root["recommend"];  // 每日推荐接口
 
     const minijson::Value* list = nullptr;
     if (songs.size() > 0) list = &songs;
     else if (playlist.size() > 0) list = &playlist;
+    else if (recommend.size() > 0) list = &recommend;
     else if (data.size() > 0) list = &data;
     else return false;
 
@@ -447,9 +568,13 @@ bool EapiClient::recommendSongs(std::vector<Song>& out) {
     out.clear();
     if (cookie_.empty()) { err_ = "需要登录才能获取每日推荐"; return false; }
 
-    std::string json = "{\"afresh\":false}";
+    std::string json = "{\"afresh\":false,\"csrf_token\":\"" +
+                       cookieValue(cookie_, "__csrf") + "\"}";
     std::string resp = request("/api/v1/discovery/recommend/songs", json, 20);
     if (resp.empty()) return false;
+    if (std::getenv("NETEASE_DEBUG")) {
+        std::fprintf(stderr, "[netease] recommend resp: %.400s\n", resp.c_str());
+    }
 
     minijson::Value root = minijson::parse(resp);
     if ((int)root["code"].asNumber() != 200) {
@@ -500,10 +625,11 @@ bool EapiClient::qrCheck(const std::string& key, QrLoginState& out) {
     out.message = root["message"].toStringValue();
 
     if (code == 803) {
-        // 登录成功，提取 cookie
+        // cookie 通常已经通过 request() 从 Set-Cookie 头合并进 cookie_。
+        // 如果 body 里也带了 cookie 且 header 没给，作为兜底。
         std::string c = root["cookie"].toStringValue();
-        if (!c.empty()) {
-            // 从完整 cookie 串里只保留关键 token 字段
+        if (!c.empty() && cookie_.find("MUSIC_U=") == std::string::npos &&
+            cookie_.find("MUSIC_A=") == std::string::npos) {
             std::string keep;
             const char* keys[] = {"MUSIC_A=", "MUSIC_U=", "__csrf=", "NMTID="};
             for (const char* k : keys) {
@@ -515,10 +641,9 @@ bool EapiClient::qrCheck(const std::string& key, QrLoginState& out) {
                     keep += c.substr(p, end - p);
                 }
             }
-            if (keep.empty()) keep = c;
-            cookie_ = keep;
+            if (!keep.empty()) cookie_ = keep;
         }
-        out.message = "登录成功";
+        out.message = cookie_.empty() ? "登录成功（但没拿到 cookie）" : "登录成功";
     } else if (code == 800) {
         out.message = "二维码已过期";
     } else if (code == 802) {
@@ -535,6 +660,9 @@ bool EapiClient::loginStatus(UserInfo& out) {
     std::string json = "{}";
     std::string resp = request("/api/w/nuser/account/get", json, 15);
     if (resp.empty()) return false;
+    if (std::getenv("NETEASE_DEBUG")) {
+        std::fprintf(stderr, "[netease] loginStatus resp: %.600s\n", resp.c_str());
+    }
 
     minijson::Value root = minijson::parse(resp);
     if ((int)root["code"].asNumber() != 200) {
@@ -556,6 +684,45 @@ bool EapiClient::loginStatus(UserInfo& out) {
     int vipType = (int)account["vipType"].asNumber();
     out.vip = vipType > 0;
 
+    return true;
+}
+
+// 从浏览器复制的完整 Cookie 字符串导入
+bool EapiClient::importCookieFromBrowser(const std::string& rawCookie) {
+    if (rawCookie.empty()) {
+        err_ = "Cookie 为空";
+        return false;
+    }
+
+    // 注意：cookieValue() 内部会自己补 '='，这里只能传不带等号的键名。
+    // 旧实现传的是 "MUSIC_U=" 这类带等号的字符串，实际查找 "MUSIC_U=="，
+    // 结果任何合法 Cookie 都导不进来。
+    const char* keys[] = {
+        "MUSIC_A", "MUSIC_U", "MUSIC_A_T", "MUSIC_R_T",
+        "__csrf", "NMTID", "JSESSIONID-WYYY", "sDeviceId",
+        "WEVNSM", "_iuqxldmzr_", "ntes_kaola_ad"
+    };
+    std::string keep;
+    bool hasLoginToken = false;
+
+    for (const char* k : keys) {
+        std::string v = cookieValue(rawCookie, k);
+        // 去掉粘贴时可能带上的首尾空格
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
+        if (v.empty()) continue;
+        if (std::string(k) == "MUSIC_U" || std::string(k) == "MUSIC_A") hasLoginToken = true;
+        if (!keep.empty()) keep += "; ";
+        keep += k;
+        keep += "=";
+        keep += v;
+    }
+
+    if (keep.empty() || !hasLoginToken) {
+        err_ = "Cookie 缺少登录态字段（需要 MUSIC_U 或 MUSIC_A），请确认已登录 music.163.com";
+        return false;
+    }
+
+    cookie_ = keep;
     return true;
 }
 

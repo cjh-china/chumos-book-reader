@@ -91,6 +91,12 @@ public:
     bool loadNeteaseSession();
     bool saveNeteaseSession();
     const std::string& neteaseCookie() const;
+    // 会话文件的实际路径 / 是否已落盘（便于诊断与测试）
+    static std::string sessionPath();
+    static bool sessionPersisted();
+
+    // 从浏览器复制的完整 Cookie 字符串导入
+    bool importNeteaseCookie(const std::string& rawCookie);
 
     // 根据登录状态选择音质：未登录 exhigh(128k)，登录后 lossless
     std::string preferredLevel() const;

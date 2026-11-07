@@ -2,13 +2,45 @@
 
 #ifdef HAS_CURL
 #include <curl/curl.h>
+#include <cctype>
 #include <cstdio>
 #include <mutex>
+#include <vector>
 
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* output) {
     size_t totalSize = size * nmemb;
     output->append((char*)contents, totalSize);
     return totalSize;
+}
+
+// 收集响应头里的 Set-Cookie（一个响应可能有多个）
+struct HeaderCtx {
+    std::vector<std::string>* cookies;
+};
+
+static size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
+    HeaderCtx* ctx = (HeaderCtx*)userdata;
+    size_t len = size * nitems;
+    std::string line(buffer, len);
+
+    // 大小写不敏感匹配 "set-cookie:"
+    if (line.size() > 11) {
+        std::string lower;
+        lower.reserve(11);
+        for (size_t i = 0; i < 11; i++) {
+            lower += (char)std::tolower((unsigned char)line[i]);
+        }
+        if (lower == "set-cookie:") {
+            std::string v = line.substr(11);
+            // 去掉前导空格
+            size_t p = v.find_first_not_of(" \t");
+            if (p != std::string::npos) v = v.substr(p);
+            // 去掉末尾换行
+            while (!v.empty() && (v.back() == '\r' || v.back() == '\n')) v.pop_back();
+            if (!v.empty() && ctx->cookies) ctx->cookies->push_back(v);
+        }
+    }
+    return len;
 }
 
 static std::once_flag g_curlInitFlag;
@@ -40,6 +72,7 @@ void HttpClient::recordFailure(const char* method, const std::string& url, int c
 std::string HttpClient::get(const std::string& url, const std::map<std::string, std::string>& headers) {
     lastError_.clear();
     lastStatus_ = 0;
+    setCookies_.clear();
 
     CURL* curl = curl_easy_init();
     if (!curl) {
@@ -48,9 +81,12 @@ std::string HttpClient::get(const std::string& url, const std::map<std::string, 
     }
 
     std::string response;
+    HeaderCtx hctx{&setCookies_};
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx);
     // 调用方显式传了 User-Agent 就不再设 CURLOPT_USERAGENT，
     // 否则 curl 会发两个 UA 头，部分服务端直接拒绝
     if (headers.find("User-Agent") == headers.end() &&
@@ -93,6 +129,7 @@ std::string HttpClient::get(const std::string& url, const std::map<std::string, 
 std::string HttpClient::post(const std::string& url, const std::string& data, const std::map<std::string, std::string>& headers) {
     lastError_.clear();
     lastStatus_ = 0;
+    setCookies_.clear();
 
     CURL* curl = curl_easy_init();
     if (!curl) {
@@ -101,11 +138,14 @@ std::string HttpClient::post(const std::string& url, const std::string& data, co
     }
 
     std::string response;
+    HeaderCtx hctx{&setCookies_};
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)data.size());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx);
     if (headers.find("User-Agent") == headers.end() &&
         headers.find("user-agent") == headers.end()) {
         curl_easy_setopt(curl, CURLOPT_USERAGENT, userAgent.c_str());

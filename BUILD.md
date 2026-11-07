@@ -293,9 +293,41 @@ Linux/macOS 需要自行下载对应平台的二进制放入上述目录，Windo
 在在线音乐页（音乐模块按 O 进入）按 `L` 打开账号页：
 
 - 未登录：按 Enter 生成二维码，把显示的 URL 复制到手机浏览器打开，扫码确认后自动登录
+- 未登录：按 `I` 粘贴浏览器 Cookie 请求头（免扫码，适合复用已登录的 Edge/Chrome 会话）
 - 已登录：显示昵称、UID、VIP 状态；按 `L` 退出登录
 
-登录信息保存在 exe 同级的 `netease_session.json`（已在 .gitignore 中排除），下次启动自动恢复。
+会话保存在用户目录的 `netease_session.json`：Windows 为 `%APPDATA%\ebook_reader\`，
+Linux/macOS 为 `$XDG_CONFIG_HOME/ebook_reader/`（未设置时为 `~/.config/ebook_reader/`）。
+Windows 下 cookie 用 DPAPI 加密后再落盘，不再明文；换构建目录或重新编译不会丢登录态。
+可用环境变量 `EBOOK_READER_HOME` 覆盖目录（测试隔离用）。旧版放在 exe 同级的
+`netease_session.json` 会在首次使用时自动迁移并删除明文残留。
+
+请求过程中服务端若通过 `Set-Cookie` 轮换 `MUSIC_U` / `__csrf`，会自动回写会话文件，
+避免「本次进程内已登录、重启就掉线」。
+
+#### 从 Edge 迁移登录态
+
+`tools/netease_edge_cookie.py` 只用 Python 标准库（DPAPI + 纯 Python AES-256-GCM）：
+
+```bash
+# 自检
+python tools/netease_edge_cookie.py --selftest
+# 只列出可解密的字段，不打印明文
+python tools/netease_edge_cookie.py --check
+# 导出一份 cookie 库副本（Edge 未独占锁定时执行，之后可离线复用）
+python tools/netease_edge_cookie.py --save-copy /tmp/edge_cookies.db --check
+# 直接导入到运行中的 --serve 服务
+python tools/netease_edge_cookie.py --cookies-db /tmp/edge_cookies.db \
+    --api http://127.0.0.1:8686
+```
+
+说明：Edge 156 的 `v10` 条目用 DPAPI 保护的 AES-256-GCM 密钥加密，且明文前
+32 字节是 `sha256(host_key)` 域绑定哈希，必须剥掉；`v20`（App-Bound）条目
+`NMTID` 等无法在普通用户态解开，但不影响登录。Edge 正在运行时会独占锁住
+`Cookies` 库，此时改用 `--cookies-db` 指向此前导出的副本，或临时关闭 Edge。
+
+等价的 HTTP 接口：`POST /api/netease/login/cookie`，请求体 `{"cookie": "MUSIC_U=...; __csrf=..."}`；
+`GET /api/netease/account` 会额外返回 `sessionPath` / `sessionPersisted` 便于排查。
 
 在线音乐页的其他入口：
 
@@ -353,7 +385,7 @@ Linux/macOS 需要自行下载对应平台的二进制放入上述目录，Windo
 | d | 下载当前 |
 | D | 批量下载已标记 |
 | / | 重新搜索 |
-| L | 网易云账号（二维码登录 / 退出） |
+| L | 网易云账号（二维码登录 / `I` 粘贴 Cookie 导入 / 退出） |
 | G | 我的歌单（需登录） |
 | T | 排行榜（无需登录） |
 | R | 每日推荐（需登录） |
@@ -454,7 +486,7 @@ tools/ 下提供两个启动脚本：
 | cache/ | 在线播放的音频缓存、歌词缓存 |
 | ebook_reader.config.json | 书库配置（最近文件、目录、排序、自动更新开关） |
 | music_store.json | 音乐数据（歌单、收藏、历史） |
-| netease_session.json | 网易云登录 cookie（已在 .gitignore 排除） |
+| netease_session.json | 网易云登录 cookie（用户目录 `%APPDATA%\ebook_reader\`，Windows 下 DPAPI 加密；旧版 exe 同级文件会自动迁移） |
 
 书库和曲库会自动收录 downloads/ 和 downloads/music/ 下的文件，无需手动添加扫描目录。
 

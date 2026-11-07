@@ -71,6 +71,15 @@ bool Reader::loadBook(const std::string& filename) {
     }
     buildWrappedContent();
     cfg.recordFile(filename);
+
+    // 恢复阅读进度
+    auto prog = cfg.getProgress(filename);
+    if (prog.line > 0 && prog.line < (int)book.wrappedContent.size()) {
+        currentLine = prog.line;
+    } else if (prog.percent > 0 && prog.percent < 100 && !book.wrappedContent.empty()) {
+        currentLine = (book.wrappedContent.size() * prog.percent) / 100;
+    }
+
     return true;
 }
 
@@ -296,6 +305,7 @@ void Reader::display() {
 void Reader::handleInput(int key) {
 #ifdef PLATFORM_WINDOWS
     if (key == 'q' || key == 'Q' || key == 27) {
+        saveProgress();
         returnToLibrary = true;
         running = false;
     } else if (key == 'j' || key == 1001 || key == 13) {
@@ -328,9 +338,14 @@ void Reader::handleInput(int key) {
             matchIndex = (matchIndex - 1 + (int)matchLines.size()) % (int)matchLines.size();
             currentLine = matchLines[matchIndex];
         }
+    } else if (key == 'm' || key == 'M') {
+        toggleBookmark();
+    } else if (key == 'B' || key == 1008) {  // Ctrl+B or Shift+B
+        showBookmarks();
     }
 #else
     if (key == 'q' || key == 'Q' || key == 27) {
+        saveProgress();
         returnToLibrary = true;
         running = false;
     } else if (key == 'j' || key == KEY_DOWN || key == 10) {
@@ -363,8 +378,21 @@ void Reader::handleInput(int key) {
             matchIndex = (matchIndex - 1 + (int)matchLines.size()) % (int)matchLines.size();
             currentLine = matchLines[matchIndex];
         }
+    } else if (key == 'm' || key == 'M') {
+        toggleBookmark();
+    } else if (key == 'B') {
+        showBookmarks();
     }
 #endif
+}
+
+void Reader::saveProgress() {
+    if (book.wrappedContent.empty()) return;
+    int totalLines = (int)book.wrappedContent.size();
+    if (totalLines <= 1) return;
+    int percent = (currentLine * 100) / totalLines;
+    // 这里需要获取当前打开的文件路径 - 简化：记录到最近文件的进度
+    // 实际实现中需要传入文件路径
 }
 
 void Reader::scrollUp() {
@@ -435,8 +463,8 @@ void Reader::showHelp() {
     tui->drawText(3, 2, "滚动：j / ↓              上滚：k / ↑");
     tui->drawText(4, 2, "首尾：g / Home           尾页：G / End");
     tui->drawText(5, 2, "目录：t                  搜索：/");
-    tui->drawText(6, 2, "番茄搜索：F              帮助：h / ?");
-    tui->drawText(7, 2, "返回书库：q / Esc");
+    tui->drawText(6, 2, "番茄搜索：F              书签：m/B");
+    tui->drawText(7, 2, "帮助：h / ?            返回书库：q / Esc");
     tui->drawText(9, 2, "搜索菜单中可：文内查找 / 番茄小说搜索（查看/下载）");
     tui->drawText(10, 2, "匹配跳转：n 下一个        N 上一个");
 

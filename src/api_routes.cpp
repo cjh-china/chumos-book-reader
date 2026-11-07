@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "fs_util.h"
+#include "mini_json.h"
 #include "parser.h"
 #include "reader.h"
 
@@ -665,6 +666,31 @@ Response handleNeteaseAccount(const Request&) {
     j.key("userId").value(acc.userId);
     j.key("nickname").value(acc.nickname);
     j.key("vip").value(acc.vip);
+    j.key("sessionPath").value(OnlineMusicService::sessionPath());
+    j.key("sessionPersisted").value(OnlineMusicService::sessionPersisted());
+    j.endObject();
+    return okJson(j);
+}
+
+// 手动导入 Cookie（扫码之外的第二条路径，也用于从浏览器迁移登录态）
+// 请求体：{"cookie": "MUSIC_U=...; __csrf=...; ..."}
+Response handleNeteaseCookieImport(const Request& req) {
+    if (req.body.empty()) return badRequest("请求体为空，需要 {\"cookie\": \"...\"}");
+
+    std::string raw = minijson::parse(req.body)["cookie"].asString();
+    if (raw.empty()) raw = bodyString(req.body, "cookie");  // 兼容非标准 JSON
+    if (raw.empty()) return badRequest("缺少 cookie 字段");
+
+    OnlineMusicService svc;
+    if (!svc.importNeteaseCookie(raw)) {
+        return Response::error("导入失败: " + svc.lastError(), 400);
+    }
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("persisted").value(true);
+    j.key("sessionPath").value(OnlineMusicService::sessionPath());
     j.endObject();
     return okJson(j);
 }
@@ -1020,6 +1046,7 @@ void registerRoutes(Server& server) {
     server.route("GET", "/api/netease/account", handleNeteaseAccount);
     server.route("POST", "/api/netease/login/qr", handleNeteaseQrStart);
     server.route("GET", "/api/netease/login/poll", handleNeteaseQrPoll);
+    server.route("POST", "/api/netease/login/cookie", handleNeteaseCookieImport);
     server.route("POST", "/api/netease/logout", handleNeteaseLogout);
 
     // 歌单 / 排行榜 / 推荐 / 歌词

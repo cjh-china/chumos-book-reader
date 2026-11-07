@@ -77,6 +77,30 @@ private:
 
     // 文件路径 → 番茄 book_id 映射
     std::vector<std::pair<std::string, std::string>> bookSources;
+
+    // 阅读进度：文件路径 → { 行号, 百分比, 更新时间 }
+    struct ReadProgress {
+        int line = 0;
+        int percent = 0;
+        long long updatedAt = 0;
+    };
+    std::vector<std::pair<std::string, ReadProgress>> readProgress;
+
+    // 书签：文件路径 → { 行号, 备注, 创建时间 }
+    struct Bookmark {
+        int line = 0;
+        std::string note;
+        long long createdAt = 0;
+    };
+    std::vector<std::pair<std::string, std::vector<Bookmark>>> bookmarks;
+
+    // 进度/书签操作（Reader 需要直接读写，故放在 public）
+public:
+    ReadProgress getProgress(const std::string& filePath) const;
+    void setProgress(const std::string& filePath, int line, int percent);
+    const std::vector<Bookmark>& getBookmarks(const std::string& filePath) const;
+    void addBookmark(const std::string& filePath, int line, const std::string& note = "");
+    void removeBookmark(const std::string& filePath, int line);
 };
 
 #endif

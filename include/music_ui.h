@@ -58,6 +58,7 @@ private:
     // 网易云相关
     void doQrLogin();
     void doLogout();
+    void doImportCookie();
     void loadNeteasePlaylists();
     void loadToplists();
     void loadRecommend();

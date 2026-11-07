@@ -224,6 +224,7 @@ endif()
 set(SOURCES
     src/main.cpp
     src/reader.cpp
+    src/bookmark.cpp
     src/config.cpp
     src/parser_txt.cpp
     src/zip_reader.cpp
@@ -281,7 +282,8 @@ if(UNIX)
 endif()
 
 if(WIN32)
-    target_link_libraries(ebook_reader ws2_32 shell32 winmm ole32)
+    # crypt32: 网易云会话文件用 DPAPI 保护 cookie
+    target_link_libraries(ebook_reader ws2_32 shell32 winmm ole32 crypt32)
 endif()
 
 if(CURL_FOUND)

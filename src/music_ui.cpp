@@ -1388,6 +1388,33 @@ void MusicUI::doLogout() {
     showMessage("已退出网易云账号");
 }
 
+void MusicUI::doImportCookie() {
+    tui->clear();
+    tui->drawText(1, 2, "从浏览器导入 Cookie");
+    tui->drawText(3, 2, "在 Edge / Chrome 登录 music.163.com，F12 > Application > Cookies，");
+    tui->drawText(4, 2, "复制完整 Cookie 请求头后粘贴到下面（内容较长，终端需支持长行粘贴）。");
+    tui->drawText(5, 2, "也可直接运行: python tools/netease_edge_cookie.py --api http://127.0.0.1:8686");
+    tui->refresh();
+
+    std::string raw = tui->promptInput(7, 2, "Cookie: ");
+    if (raw.empty()) {
+        showMessage("已取消导入");
+        return;
+    }
+    if (!online.importNeteaseCookie(raw)) {
+        showMessage("导入失败: " + online.lastError(), 4000);
+        return;
+    }
+
+    loginKey.clear();
+    loginQrUrl.clear();
+    refreshAccount();
+    showMessage(account.loggedIn
+                    ? "Cookie 已持久化，登录成功"
+                    : "Cookie 已保存，但服务端暂未确认登录态",
+                3000);
+}
+
 void MusicUI::loadNeteasePlaylists() {
     OnlineMusicService svc;
     if (!svc.neteasePlaylists(npList)) {
@@ -1484,6 +1511,7 @@ void MusicUI::drawLogin() {
 
         if (loginKey.empty()) {
             tui->drawText(3, 2, "按 Enter 生成登录二维码");
+            tui->drawText(4, 2, "按 I 从浏览器导入 Cookie（免扫码）");
             tui->drawText(5, 4, "登录后可解锁：");
             tui->drawText(6, 6, "· 无损 / Hi-Res 音质");
             tui->drawText(7, 6, "· 我的歌单");
@@ -1529,7 +1557,9 @@ void MusicUI::drawLogin() {
     }
 
     tui->drawText(h - 1, 0, std::string(w, ' '));
-    tui->drawText(h - 1, 0, "  Esc 返回 | q 退出音乐");
+    tui->drawText(h - 1, 0, account.loggedIn
+                  ? "  Esc 返回 | q 退出音乐 | L 退出登录"
+                  : "  Esc 返回 | q 退出音乐 | I 导入 Cookie");
 }
 
 void MusicUI::handleLoginKey(int key) {
@@ -1540,6 +1570,11 @@ void MusicUI::handleLoginKey(int key) {
         if (key == 'l' || key == 'L') {
             doLogout();
         }
+        return;
+    }
+
+    if ((key == 'i' || key == 'I') && !account.loggedIn) {
+        doImportCookie();
         return;
     }
 

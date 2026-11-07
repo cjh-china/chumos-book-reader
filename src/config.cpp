@@ -134,6 +134,43 @@ bool Config::load(const std::string& dir) {
         }
     }
 
+    // 读取阅读进度
+    const minijson::Value& rprog = root["read_progress"];
+    if (rprog.type == minijson::Value::Object) {
+        for (const auto& kv : rprog.obj) {
+            const minijson::Value& v = kv.second;
+            if (v.type == minijson::Value::Object) {
+                ReadProgress p;
+                p.line = (int)v["line"].asNumber();
+                p.percent = (int)v["percent"].asNumber();
+                p.updatedAt = (long long)v["updated_at"].asNumber();
+                if (!kv.first.empty()) readProgress.emplace_back(kv.first, p);
+            }
+        }
+    }
+
+    // 读取书签
+    const minijson::Value& bmarks = root["bookmarks"];
+    if (bmarks.type == minijson::Value::Object) {
+        for (const auto& kv : bmarks.obj) {
+            const minijson::Value& arr = kv.second;
+            if (arr.type == minijson::Value::Array) {
+                std::vector<Bookmark> bms;
+                for (size_t j = 0; j < arr.size(); j++) {
+                    const minijson::Value& v = arr[j];
+                    if (v.type == minijson::Value::Object) {
+                        Bookmark bm;
+                        bm.line = (int)v["line"].asNumber();
+                        bm.note = v["note"].toStringValue();
+                        bm.createdAt = (long long)v["created_at"].asNumber();
+                        bms.push_back(bm);
+                    }
+                }
+                if (!kv.first.empty() && !bms.empty()) bookmarks.emplace_back(kv.first, bms);
+            }
+        }
+    }
+
     return true;
 }
 
@@ -182,7 +219,39 @@ bool Config::save() {
         if (i + 1 < bookSources.size()) os += ",";
         os += "\n";
     }
+    os += "  },\n";
+
+    os += "  \"read_progress\": {\n";
+    for (size_t i = 0; i < readProgress.size(); i++) {
+        os += "    \"" + jsonEscape(readProgress[i].first) + "\": {\n";
+        os += "      \"line\": " + std::to_string(readProgress[i].second.line) + ",\n";
+        os += "      \"percent\": " + std::to_string(readProgress[i].second.percent) + ",\n";
+        os += "      \"updated_at\": " + std::to_string(readProgress[i].second.updatedAt) + "\n";
+        os += "    }";
+        if (i + 1 < readProgress.size()) os += ",";
+        os += "\n";
+    }
+    os += "  },\n";
+
+    os += "  \"bookmarks\": {\n";
+    for (size_t i = 0; i < bookmarks.size(); i++) {
+        os += "    \"" + jsonEscape(bookmarks[i].first) + "\": [\n";
+        for (size_t j = 0; j < bookmarks[i].second.size(); j++) {
+            const auto& bm = bookmarks[i].second[j];
+            os += "      {\n";
+            os += "        \"line\": " + std::to_string(bm.line) + ",\n";
+            os += "        \"note\": \"" + jsonEscape(bm.note) + "\",\n";
+            os += "        \"created_at\": " + std::to_string(bm.createdAt) + "\n";
+            os += "      }";
+            if (j + 1 < bookmarks[i].second.size()) os += ",";
+            os += "\n";
+        }
+        os += "    ]";
+        if (i + 1 < bookmarks.size()) os += ",";
+        os += "\n";
+    }
     os += "  }\n";
+
     os += "}\n";
 
     return fsutil::writeAllAtomic(configFilePath, os);
@@ -261,4 +330,90 @@ std::string Config::bookSource(const std::string& filePath) const {
         if (kv.first == full) return kv.second;
     }
     return "";
+}
+
+Config::ReadProgress Config::getProgress(const std::string& filePath) const {
+    ReadProgress p{};
+    if (filePath.empty()) return p;
+    std::string full = fsutil::normalize(filePath);
+    for (const auto& kv : readProgress) {
+        if (kv.first == full) return kv.second;
+    }
+    return p;
+}
+
+void Config::setProgress(const std::string& filePath, int line, int percent) {
+    if (filePath.empty()) return;
+    std::string full = fsutil::normalize(filePath);
+    for (auto& kv : readProgress) {
+        if (kv.first == full) {
+            kv.second.line = line;
+            kv.second.percent = percent;
+            kv.second.updatedAt = nowMs();
+            save();
+            return;
+        }
+    }
+    ReadProgress p;
+    p.line = line;
+    p.percent = percent;
+    p.updatedAt = nowMs();
+    readProgress.emplace_back(full, p);
+    save();
+}
+
+const std::vector<Config::Bookmark>& Config::getBookmarks(const std::string& filePath) const {
+    static const std::vector<Bookmark> empty;
+    if (filePath.empty()) return empty;
+    std::string full = fsutil::normalize(filePath);
+    for (const auto& kv : bookmarks) {
+        if (kv.first == full) return kv.second;
+    }
+    return empty;
+}
+
+void Config::addBookmark(const std::string& filePath, int line, const std::string& note) {
+    if (filePath.empty()) return;
+    std::string full = fsutil::normalize(filePath);
+    for (auto& kv : bookmarks) {
+        if (kv.first == full) {
+            // 检查是否已有同行书签
+            for (auto& bm : kv.second) {
+                if (bm.line == line) {
+                    bm.note = note;
+                    save();
+                    return;
+                }
+            }
+            Bookmark bm;
+            bm.line = line;
+            bm.note = note;
+            bm.createdAt = nowMs();
+            kv.second.push_back(bm);
+            save();
+            return;
+        }
+    }
+    Bookmark bm;
+    bm.line = line;
+    bm.note = note;
+    bm.createdAt = nowMs();
+    bookmarks.emplace_back(full, std::vector<Bookmark>{bm});
+    save();
+}
+
+void Config::removeBookmark(const std::string& filePath, int line) {
+    if (filePath.empty()) return;
+    std::string full = fsutil::normalize(filePath);
+    for (auto& kv : bookmarks) {
+        if (kv.first == full) {
+            auto it = std::remove_if(kv.second.begin(), kv.second.end(),
+                                     [&](const Bookmark& bm) { return bm.line == line; });
+            if (it != kv.second.end()) {
+                kv.second.erase(it, kv.second.end());
+                save();
+            }
+            return;
+        }
+    }
 }

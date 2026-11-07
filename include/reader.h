@@ -114,6 +114,12 @@ private:
     static std::string fmtSize(long long bytes);
     static std::string fmtTime(long long ms);
 
+    // 书签与进度
+    void saveProgress();
+    void toggleBookmark();
+    void showBookmarks();
+    void showBookmarkMenu();
+
     TUI* tui;
     Book book;
     int currentLine;
