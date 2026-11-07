@@ -1239,6 +1239,7 @@ body.desktop .pv-cover{box-shadow:0 18px 44px rgba(20,25,35,.22),inset 0 0 0 10p
           <div class="switch" id="tapSwitch"><i></i></div>
         </div>
         <div class="set-row"><span class="lbl">自动阅读</span><div class="grow chips" id="speedChips"></div></div>
+        <div class="panel-tip" style="padding:10px 16px 0">快捷键：←/→ 翻页 · Shift+←/→ 上一章 / 下一章 · ↑/↓ 平滑滚动 · A 自动阅读 · R 听书</div>
         <button class="link-btn" id="btnReset">恢复默认</button>
       </div>
     </aside>
@@ -1301,7 +1302,7 @@ body.desktop .pv-cover{box-shadow:0 18px 44px rgba(20,25,35,.22),inset 0 0 0 10p
     <div class="para-menu" id="paraMenu"></div>
     <div class="toast" id="toast"></div>
   </div>
-  <div class="stage-hint">点击屏幕中央呼出菜单 · 左右点击翻屏 · ←/→ 切章 · A 自动阅读 · R 听书 · 长按段落可复制/划线 · 设置自动保存</div>
+  <div class="stage-hint">点击屏幕中央呼出菜单 · 左右点击翻屏 · ←/→ 翻页 · Shift+←/→ 切章 · A 自动阅读 · R 听书 · 长按段落可复制/划线 · 设置自动保存</div>
 </div>
 
 <script>
@@ -3257,10 +3258,27 @@ document.addEventListener('keydown',e=>{
     return;
   }
   if(S.view!=='reader')return;
-  if(e.key==='ArrowDown'||e.key==='PageDown')scroller.scrollBy({top:scroller.clientHeight*0.88,behavior:'smooth'});
-  if(e.key==='ArrowUp'||e.key==='PageUp')scroller.scrollBy({top:-scroller.clientHeight*0.88,behavior:'smooth'});
-  if(e.key==='ArrowLeft')jumpChapter(-1);
-  if(e.key==='ArrowRight')jumpChapter(1);
+  // ←/→ 翻一屏（尊重翻页动画设置），Shift+←/→ 切上一章 / 下一章；
+  // ↑/↓ 与 PageUp/PageDown 平滑滚动。面板打开时只作用于面板内部。
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown'||
+     e.key==='PageUp'||e.key==='PageDown'){
+    const forward=(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key==='PageDown');
+    e.preventDefault();
+    if($('#mask').classList.contains('show')){
+      if($('#chapterPanel').classList.contains('open')){
+        const cb=$('#chapterBody');
+        cb.scrollBy({top:(forward?1:-1)*cb.clientHeight*0.88,behavior:'smooth'});
+      }
+      return;
+    }
+    if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+      if(e.shiftKey)jumpChapter(forward?1:-1);
+      else turnPage(forward?1:-1);
+    }else{
+      scroller.scrollBy({top:(forward?1:-1)*scroller.clientHeight*0.88,behavior:'smooth'});
+    }
+    return;
+  }
   if(e.key==='a'||e.key==='A')toggleAuto();
   if(e.key==='r'||e.key==='R')ttsToggle();
   if(e.key==='t'||e.key==='T'){openPanel('tocPanel');renderToc();scrollToCurrentChapter();}
