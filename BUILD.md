@@ -109,6 +109,12 @@
 ### 图形阅读界面（ENABLE_GUI）
 
 ```bash
+# 完整界面（阅读 + 音乐，需要 libcurl + OpenSSL）
+cmake -S . -B build_all -DENABLE_GUI=ON -DENABLE_MUSIC=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build_all
+build_all/ebook_reader.exe --gui --port 8686
+
+# 只要阅读界面（音乐页自动降级为本地曲库）
 cmake -S . -B build_gui -DENABLE_GUI=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build_gui
 build_gui/ebook_reader.exe --gui --port 8686
@@ -138,12 +144,29 @@ build_gui/ebook_reader.exe --gui --port 8686
 `T` 打开目录、`Esc` 关闭面板。阅读设置存浏览器 localStorage；进度与书签存
 `ebook_reader.config.json`，与 TUI 共用同一份记录。
 
+**音乐界面**（底部「音乐」标签）：本地曲库（`downloads/music`，点歌即播、
+支持拖动进度）、在线搜索、发现（每日推荐 / 我的歌单 / 排行榜，歌单可展开）、
+账号（扫码登录 / Cookie 导入 / 退出）、迷你播放条、全屏播放器（唱片旋转、
+进度 / 音量、同步歌词与翻译、上一首 / 下一首、列表循环 / 随机 / 单曲循环、
+播放队列、下载到本地曲库）。快捷键：`空格` 播放暂停、`←` / `→` 切歌。
+- 在线部分需要 `ENABLE_MUSIC=ON`；只开 `ENABLE_GUI` 时页面会显示编译提示，
+  但**本地曲库仍可播放**（`/api/music/library` 与 `/api/music/file` 不依赖音乐模块）。
+- 本地音频用 `<audio>` + HTTP `Range` 播放，服务端每次最多返回 1 MB 分片；
+  只允许访问 `downloads/music` 下的 mp3/flac/wav/ogg/m4a/aac，防止路径穿越。
+- 登录凭据沿用 TUI 的持久化会话；界面里的「退出登录」有二次确认。
+
 配套新增接口（`ENABLE_API` 下即可用，不依赖 GUI）：
 `/api/book/content?raw=1&line=&count=`、`/api/book/search?raw=1`、
 `/api/book/toc`（每项含 `end` / `paragraphs` / `chars` / `minutes`）、
 `/api/book/chapter?index=N`（返回该章完整原始段落及 `prevIndex` / `nextIndex` 等
 定位信息，也可用 `line=N` 定位所在章节，`limit=` 限制单次返回段数）、
-`GET|POST /api/book/progress`、`GET|POST /api/book/bookmarks`。
+`GET|POST /api/book/progress`、`GET|POST /api/book/bookmarks`、
+`/api/music/library`（GUI 独立编译时提供简版曲库）、
+`/api/music/file?path=`（音频流 + `Range`/206，音乐页播放本地文件用）、
+`/api/netease/login/qr` 额外返回内联 `svg` 二维码、
+`POST /api/online/download` 同时支持查询串与 JSON 请求体。
+健康检查 `/api/health` 的 `capabilities` 会标出 `music` / `music-file` / `gui`，
+前端据此决定在线功能是否可用。
 
 ---
 

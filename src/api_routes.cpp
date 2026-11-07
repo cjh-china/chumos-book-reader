@@ -14,6 +14,7 @@
 #ifdef HAS_MUSIC
 #include "music.h"
 #include "online_music.h"
+#include "qrcodegen.hpp"
 #endif
 
 #ifdef HAS_GUI
@@ -21,6 +22,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -187,6 +189,12 @@ Response handleHealth(const Request&) {
 #ifdef HAS_MUSIC
     caps.push_back("music");
     caps.push_back("online-music");
+#endif
+#if defined(HAS_GUI) || defined(HAS_MUSIC)
+    caps.push_back("music-file");
+#endif
+#ifdef HAS_GUI
+    caps.push_back("gui");
 #endif
     j.key("capabilities");
     j.beginArray();
@@ -616,6 +624,150 @@ Response handleBookSearch(const Request& req) {
     return okJson(j);
 }
 
+// ==================== 音乐界面：本地音频服务 ====================
+// 浏览器 <audio> 需要 206 + Content-Range 才能拖动进度。
+// 只放行 downloads/music 下的音频文件，避免把本机任意文件暴露给页面。
+#if defined(HAS_GUI) || defined(HAS_MUSIC)
+
+std::string musicRootDir() {
+    return fsutil::normalize(fsutil::join(fsutil::join(fsutil::exeDir(), "downloads"), "music"));
+}
+
+std::string lowerAscii(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+bool isAudioFilePath(const std::string& path) {
+    std::string e = fsutil::extension(path);
+    return e == "mp3" || e == "flac" || e == "wav" ||
+           e == "ogg" || e == "m4a" || e == "aac";
+}
+
+std::string audioContentType(const std::string& path) {
+    std::string e = fsutil::extension(path);
+    if (e == "mp3") return "audio/mpeg";
+    if (e == "flac") return "audio/flac";
+    if (e == "wav") return "audio/wav";
+    if (e == "ogg") return "audio/ogg";
+    if (e == "m4a" || e == "aac") return "audio/mp4";
+    return "application/octet-stream";
+}
+
+bool isInsideMusicDir(const std::string& path, const std::string& dir) {
+    auto unify = [](std::string s) {
+        for (char& c : s) if (c == '\\') c = '/';
+        return s;
+    };
+    std::string p = unify(fsutil::normalize(path));
+    std::string d = unify(fsutil::normalize(dir));
+    if (d.empty() || p.size() <= d.size()) return false;
+    if (p.find("..") != std::string::npos) return false;   // 拒绝路径穿越
+    if (lowerAscii(p.substr(0, d.size())) != lowerAscii(d)) return false;
+    return p[d.size()] == '/';
+}
+
+Response handleMusicFile(const Request& req) {
+    std::string path = queryStr(req, "path");
+    if (path.empty()) return badRequest("缺少参数 path");
+    std::string root = musicRootDir();
+    std::string full = fsutil::normalize(path);
+    if (!isInsideMusicDir(full, root)) return notFound("只允许播放 downloads/music 下的音频文件");
+    if (!isAudioFilePath(full) || !fsutil::isFile(full)) return notFound("音频文件不存在");
+
+    std::string data;
+    if (!fsutil::readAll(full, data)) return Response::error("读取音频文件失败", 500);
+    long long size = (long long)data.size();
+    if (size == 0) return Response::error("音频文件为空", 500);
+
+    long long start = 0, end = size - 1;
+    bool ranged = false;
+    auto it = req.headers.find("range");
+    if (it != req.headers.end()) {
+        std::string v = it->second;
+        if (v.compare(0, 6, "bytes=") == 0) {
+            std::string spec = v.substr(6);
+            size_t dash = spec.find('-');
+            std::string a = spec.substr(0, dash);
+            std::string b = dash == std::string::npos ? "" : spec.substr(dash + 1);
+            try {
+                if (!a.empty()) start = std::stoll(a);
+                else if (!b.empty()) start = size - std::stoll(b);
+            } catch (...) { start = 0; }
+            if (!a.empty() && !b.empty()) {
+                try { end = std::stoll(b); } catch (...) {}
+            }
+            ranged = true;
+        }
+    }
+    if (start < 0) start = 0;
+    if (start >= size) start = size - 1;
+    if (end >= size) end = size - 1;
+    if (end < start) end = start;
+    const long long kChunk = 1024 * 1024;   // 单次最多 1 MB，避免长时间阻塞其它 API 请求
+    if (end - start + 1 > kChunk) end = start + kChunk - 1;
+    if (!ranged && size > kChunk) ranged = true;   // 大文件无 Range 时也分块
+
+    Response res;
+    res.status = ranged ? 206 : 200;
+    res.contentType = audioContentType(full);
+    res.body.assign(data, (size_t)start, (size_t)(end - start + 1));
+    res.headers["Accept-Ranges"] = "bytes";
+    res.headers["Cache-Control"] = "no-store";
+    if (ranged) {
+        res.headers["Content-Range"] = "bytes " + std::to_string(start) + "-" +
+                                       std::to_string(end) + "/" + std::to_string(size);
+    }
+    return res;
+}
+#endif
+
+// 未编译音乐模块时，GUI 仍可播放 downloads/music 下的本地音频。
+#if defined(HAS_GUI) && !defined(HAS_MUSIC)
+Response handleMusicLibrary(const Request& req) {
+    std::string dir = queryStr(req, "dir");
+    if (dir.empty()) dir = musicRootDir();
+    Json j;
+    j.beginObject();
+    j.key("dir").value(dir);
+    if (!fsutil::isDirectory(dir)) {
+        j.key("count").value(0);
+        j.key("songs");
+        j.beginArray();
+        j.endArray();
+        j.key("note").value("目录不存在，把音频文件放进 downloads/music 即可");
+        j.endObject();
+        return okJson(j);
+    }
+    auto files = fsutil::listFilesRecursive(dir, 4);
+    std::vector<std::string> songs;
+    for (const auto& f : files) if (isAudioFilePath(f)) songs.push_back(f);
+    std::sort(songs.begin(), songs.end());
+    j.key("count").value((int)songs.size());
+    j.key("songs");
+    j.beginArray();
+    for (const auto& f : songs) {
+        std::string stem = fsutil::stem(fsutil::filename(f));
+        std::string title = stem, artist = "";
+        size_t sep = stem.find(" - ");
+        if (sep != std::string::npos) {
+            artist = stem.substr(0, sep);
+            title = stem.substr(sep + 3);
+        }
+        j.beginObject();
+        j.key("path").value(f);
+        j.key("title").value(title);
+        j.key("artist").value(artist);
+        j.key("album").value("");
+        j.key("duration").value(0);
+        j.endObject();
+    }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+#endif
+
 #ifdef HAS_CURL
 
 Response handleFanqieSearch(const Request& req) {
@@ -921,6 +1073,40 @@ Response handleNeteaseCookieImport(const Request& req) {
     return okJson(j);
 }
 
+// 把登录链接编码成内联 SVG（终端版用 term_qr.h 的另一套渲染）。
+std::string qrToSvg(const std::string& text, int border = 2, int scale = 6) {
+    if (text.empty()) return "";
+    try {
+        qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(
+            text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
+        int n = qr.getSize();
+        int dim = (n + border * 2) * scale;
+        std::string s = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" +
+            std::to_string(dim) + "\" height=\"" + std::to_string(dim) +
+            "\" viewBox=\"0 0 " + std::to_string(dim) + " " + std::to_string(dim) + "\">" +
+            "<rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><g fill=\"#000\">";
+        // 把每行连续的黑色模块合并成一个 rect，避免生成过大的 SVG
+        for (int y = 0; y < n; y++) {
+            int run = -1;
+            for (int x = 0; x <= n; x++) {
+                bool black = x < n && qr.getModule(x, y);
+                if (black && run < 0) run = x;
+                if (!black && run >= 0) {
+                    s += "<rect x=\"" + std::to_string((run + border) * scale) +
+                         "\" y=\"" + std::to_string((y + border) * scale) +
+                         "\" width=\"" + std::to_string((x - run) * scale) +
+                         "\" height=\"" + std::to_string(scale) + "\"/>";
+                    run = -1;
+                }
+            }
+        }
+        s += "</g></svg>";
+        return s;
+    } catch (...) {
+        return "";
+    }
+}
+
 Response handleNeteaseQrStart(const Request&) {
     OnlineMusicService svc;
     std::string key, url, msg;
@@ -932,6 +1118,7 @@ Response handleNeteaseQrStart(const Request&) {
     j.beginObject();
     j.key("key").value(key);
     j.key("url").value(url);
+    j.key("svg").value(qrToSvg(url));
     j.key("message").value(msg);
     j.endObject();
     return okJson(j);
@@ -1073,10 +1260,18 @@ Response handleNeteaseLyric(const Request& req) {
 }
 
 Response handleNeteaseDownload(const Request& req) {
-    std::string id = queryStr(req, "id");
-    std::string source = queryStr(req, "source", "netease");
-    std::string title = queryStr(req, "title");
-    std::string artist = queryStr(req, "artist");
+    // POST 支持 JSON 请求体（GUI），也兼容原来的查询串写法。
+    auto field = [&](const std::string& key, const std::string& def) {
+        if (req.method == "POST") {
+            std::string v = bodyString(req.body, key);
+            if (!v.empty()) return v;
+        }
+        return queryStr(req, key, def);
+    };
+    std::string id = field("id", "");
+    std::string source = field("source", "netease");
+    std::string title = field("title", "");
+    std::string artist = field("artist", "");
     if (id.empty()) return badRequest("缺少参数 id");
 
     OnlineSong s;
@@ -1263,10 +1458,13 @@ void registerRoutes(Server& server) {
     server.route("POST", "/api/sonovel/download", handleSoNovelDownload);
 #endif
 
-#ifdef HAS_MUSIC
-    // 本地曲库
+#if defined(HAS_GUI) || defined(HAS_MUSIC)
+    // 本地曲库与音频文件（GUI 未编译音乐模块时仍可播放本地音频）
     server.route("GET", "/api/music/library", handleMusicLibrary);
+    server.route("GET", "/api/music/file", handleMusicFile);
+#endif
 
+#ifdef HAS_MUSIC
     // 在线音乐
     server.route("GET", "/api/online/sources", handleOnlineSources);
     server.route("GET", "/api/online/search", handleOnlineSearch);

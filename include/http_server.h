@@ -23,6 +23,8 @@ struct Response {
     int status = 200;
     std::string contentType = "application/json; charset=utf-8";
     std::string body;
+    // 额外响应头（音频文件的 Range / Content-Range 等）；键按原样输出。
+    std::map<std::string, std::string> headers;
 
     // 便捷方法：返回 JSON 字符串响应
     static Response json(const std::string& text, int code = 200);

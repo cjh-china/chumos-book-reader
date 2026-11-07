@@ -13,12 +13,14 @@
 #include <ws2tcpip.h>
 // ws2_32 由 CMake 链接（MinGW 不支持 #pragma comment(lib)）
 using socklen_t = int;
+using SocketHandle = SOCKET;
 #define CLOSE_SOCKET closesocket
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+using SocketHandle = int;
 #define CLOSE_SOCKET close
 #endif
 
@@ -296,6 +298,17 @@ bool readExact(int sock, size_t n, std::string& out) {
     return true;
 }
 
+// 发送全部字节：音频 Range 响应可能较大，单次 send() 不保证写完。
+bool sendAll(SocketHandle sock, const char* data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        int n = send(sock, data + sent, (int)(len - sent), 0);
+        if (n <= 0) return false;
+        sent += (size_t)n;
+    }
+    return true;
+}
+
 std::string statusText(int code) {
     switch (code) {
         case 200: return "OK";
@@ -303,6 +316,7 @@ std::string statusText(int code) {
         case 400: return "Bad Request";
         case 401: return "Unauthorized";
         case 403: return "Forbidden";
+        case 206: return "Partial Content";
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
         case 500: return "Internal Server Error";
@@ -384,12 +398,15 @@ void handleClient(int sock, Server::Impl* impl) {
     head += "Content-Type: " + res.contentType + "\r\n";
     head += "Content-Length: " + std::to_string(res.body.size()) + "\r\n";
     head += "Connection: close\r\n";
+    for (const auto& kv : res.headers) {
+        head += kv.first + ": " + kv.second + "\r\n";
+    }
     head += "Access-Control-Allow-Origin: *\r\n";
     head += "\r\n";
 
-    send(sock, head.data(), (int)head.size(), 0);
+    sendAll(sock, head.data(), head.size());
     if (!res.body.empty()) {
-        send(sock, res.body.data(), (int)res.body.size(), 0);
+        sendAll(sock, res.body.data(), res.body.size());
     }
     CLOSE_SOCKET(sock);
 }

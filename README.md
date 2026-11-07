@@ -85,16 +85,28 @@ chapter navigation, chapter jump buttons and in-chapter progress, three-speed
 auto-scroll reading, font / line-spacing / theme controls, brightness dimming,
 bookmarks, progress sync and full-text search.
 
+A **Music** tab is included as well: a local library player (with Range/seek
+support), online search, NetEase daily recommendations / playlists / toplists, QR
+and Cookie login, a mini player, a full-screen player with synced (and translated)
+lyrics, queue, shuffle/repeat modes and volume. Online features require building
+with `-DENABLE_MUSIC=ON`; with GUI alone the tab still plays files from
+`downloads/music` and shows a hint for the rest.
+
 The page is a single HTML file (`web/reader.html`) embedded into the executable
 at compile time and served by the program's own loopback HTTP server — no Qt,
 WebView2, Electron or runtime web assets are required. `ENABLE_GUI=ON`
 automatically enables `ENABLE_API`, because the UI consumes those JSON endpoints.
 
 ```bash
+# Full experience: reader + music (needs libcurl + OpenSSL)
+cmake -S . -B build_all -DENABLE_GUI=ON -DENABLE_MUSIC=ON
+cmake --build build_all
+./build_all/ebook_reader.exe --gui          # opens a standalone app window
+
+# Or reader only (Music tab falls back to the local library)
 cmake -S . -B build_gui -DENABLE_GUI=ON
 cmake --build build_gui
-./build_gui/ebook_reader.exe --gui          # opens a standalone app window
-# or: ./build_gui/ebook_reader.exe --serve  # then open http://127.0.0.1:8686/ yourself
+./build_gui/ebook_reader.exe --serve        # then open http://127.0.0.1:8686/ yourself
 ```
 
 On Windows the window uses Edge (or Chrome) in `--app` mode with an isolated
@@ -124,13 +136,14 @@ testing; the server is single-threaded and binds to loopback by default.
 | POST | `/api/fanqie/download` | download a Fanqie book |
 | GET | `/api/sonovel/search?q=` | so-novel aggregated search |
 | POST | `/api/sonovel/download` | download via so-novel |
-| GET | `/api/music/library[?dir=]` | local music library |
+| GET | `/api/music/library[?dir=]` | local music library (available in GUI-only builds too) |
+| GET | `/api/music/file?path=` | stream a local audio file with `Range` / 206 seek support; restricted to `downloads/music` |
 | GET | `/api/online/sources` | available online sources |
 | GET | `/api/online/search?q=&source=` | online music search |
 | GET | `/api/online/resolve?id=&source=` | resolve a stream URL |
-| POST | `/api/online/download?id=&source=&title=&artist=` | download a song |
+| POST | `/api/online/download?id=&source=&title=&artist=` | download a song (query string or JSON body) |
 | GET | `/api/netease/account` | current NetEase login state |
-| POST | `/api/netease/login/qr` | start QR login, returns `key` + `url` |
+| POST | `/api/netease/login/qr` | start QR login, returns `key` + `url` + inline `svg` |
 | GET | `/api/netease/login/poll?key=` | poll QR state (801/802/800/803) |
 | POST | `/api/netease/login/cookie` | import a browser Cookie header (`{"cookie":"..."}`) |
 | POST | `/api/netease/logout` | clear NetEase session |
