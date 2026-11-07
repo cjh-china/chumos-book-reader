@@ -28,6 +28,12 @@
 #include <memory>
 #endif
 
+#ifdef HAS_GUI
+#include "gui.h"
+#include <chrono>
+#include <thread>
+#endif
+
 #ifdef HAS_CURL
 static int runFanqie() {
     FanqieDownloader dl(8);
@@ -90,6 +96,9 @@ static void printUsage(const char* prog) {
     std::cerr << "  " << prog << " --fanqie           番茄小说下载" << std::endl;
 #ifdef HAS_API
     std::cerr << "  " << prog << " --serve [--port N] 以 HTTP API 模式运行（无 TUI）" << std::endl;
+#endif
+#ifdef HAS_GUI
+    std::cerr << "  " << prog << " --gui [--port N]   打开图形阅读界面（独立窗口）" << std::endl;
 #endif
     std::cerr << std::endl;
     std::cerr << "支持格式: TXT(自动识别 UTF-8/UTF-16/GBK), EPUB, DOCX" << std::endl;
@@ -177,6 +186,50 @@ int main(int argc, char* argv[]) {
             return 0;
 #else
             std::cerr << "API 模式未编译进本程序，请用 -DENABLE_API=ON 重新构建。" << std::endl;
+            return 1;
+#endif
+        }
+        if (arg == "--gui") {
+#ifdef HAS_GUI
+            int port = 8686;
+            std::string host = "127.0.0.1";
+            for (size_t i = 2; i < args.size(); i++) {
+                if ((args[i] == "--port" || args[i] == "-p") && i + 1 < args.size()) {
+                    try { port = std::stoi(args[++i]); } catch (...) { port = 8686; }
+                } else if (args[i] == "--host" && i + 1 < args.size()) {
+                    host = args[++i];
+                }
+            }
+            if (port <= 0) port = 8686;
+
+            api::Server server;
+            api::registerRoutes(server);
+
+            // HTTP 服务的 listen() 会阻塞，放到后台线程；主线程负责打开窗口并等待。
+            std::thread serverThread([&server, host, port]() {
+                std::string err;
+                if (!server.listen(host, port, err)) {
+                    std::cerr << "GUI 服务启动失败: " << err << std::endl;
+                }
+            });
+
+            // port() 在 listen 成功后才被赋值，作为监听就绪标志。
+            for (int i = 0; i < 60 && server.port() == 0; i++) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (server.port() == 0) {
+                std::cerr << "GUI 服务未能启动，请检查端口是否被占用。" << std::endl;
+                server.stop();
+                serverThread.join();
+                return 1;
+            }
+
+            gui::openWindow(host, server.port());
+            server.stop();
+            serverThread.join();
+            return 0;
+#else
+            std::cerr << "GUI 未编译进本程序，请用 -DENABLE_GUI=ON 重新构建。" << std::endl;
             return 1;
 #endif
         }

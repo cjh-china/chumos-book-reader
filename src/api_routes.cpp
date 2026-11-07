@@ -16,6 +16,10 @@
 #include "online_music.h"
 #endif
 
+#ifdef HAS_GUI
+#include "gui.h"
+#endif
+
 #include <algorithm>
 #include <cstdio>
 #include <memory>
@@ -289,23 +293,159 @@ Response handleBookInfo(const Request&) {
     return okJson(j);
 }
 
+// UTF-8 字符数：只统计非续字节，中文按一个字计，避免按字节夸大篇幅。
+size_t utf8CharCount(const std::string& s) {
+    size_t n = 0;
+    for (unsigned char c : s) {
+        if ((c & 0xC0) != 0x80) ++n;
+    }
+    return n;
+}
+
+// 章节边界统一按「原始段落行号」计算：
+// [start, end)，end 为下一章标题所在行，最后一章则到全文末尾。
+bool hasUsableToc(const Book& book) {
+    return !book.chapters.empty() && book.chapterStarts.size() >= book.chapters.size();
+}
+int chapterStartAt(const Book& book, size_t i) {
+    if (i >= book.chapterStarts.size()) return 0;
+    int v = book.chapterStarts[i];
+    return v < 0 ? 0 : v;
+}
+int chapterEndAt(const Book& book, size_t i) {
+    int total = (int)book.content.size();
+    int start = chapterStartAt(book, i);
+    if (i + 1 < book.chapterStarts.size()) {
+        int next = book.chapterStarts[i + 1];
+        if (next > start && next <= total) return next;
+    }
+    return total > start ? total : start;
+}
+size_t chapterCharCount(const Book& book, int start, int end) {
+    size_t n = 0;
+    for (int i = start; i < end && i < (int)book.content.size(); i++) {
+        n += utf8CharCount(book.content[i]);
+    }
+    return n;
+}
+int chapterMinutes(size_t chars) {
+    // 按每分钟 400 字估算，至少 1 分钟
+    return (int)((chars + 399) / 400 < 1 ? 1 : (chars + 399) / 400);
+}
+
 Response handleBookToc(const Request&) {
     State& st = state();
     std::lock_guard<std::mutex> lock(st.mu);
     if (!st.loaded) return badRequest("尚未打开任何书");
 
+    const size_t n = st.book.chapters.size();
+    const int total = (int)st.book.content.size();
+    const bool usable = hasUsableToc(st.book);
+
     Json j;
     j.beginObject();
-    j.key("count").value((int)st.book.chapters.size());
+    j.key("count").value((int)n);
+    j.key("totalLines").value(total);
+    j.key("title").value(st.book.title);
     j.key("chapters");
     j.beginArray();
-    for (size_t i = 0; i < st.book.chapters.size(); i++) {
+    for (size_t i = 0; i < n; i++) {
+        int start = usable ? chapterStartAt(st.book, i) : 0;
+        int end = usable ? chapterEndAt(st.book, i) : total;
+        size_t chars = chapterCharCount(st.book, start, end);
         j.beginObject();
         j.key("index").value((int)i);
         j.key("title").value(st.book.chapters[i]);
-        j.key("line").value((int)st.book.chapterStarts[i]);
+        j.key("line").value(start);
+        j.key("end").value(end);
+        j.key("paragraphs").value(end - start);
+        j.key("chars").value((int)chars);
+        j.key("minutes").value(chapterMinutes(chars));
+        j.key("percent").value(total > 0 ? (int)(start * 100LL / total) : 0);
         j.endObject();
     }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+// 按章节阅读：返回某一章的完整原始段落，并给出上一章 / 下一章定位信息。
+// index=N 指定章节；也可用 line=N 定位所在章节。limit 限制单次返回的段落数。
+Response handleBookChapter(const Request& req) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.mu);
+    if (!st.loaded) return badRequest("尚未打开任何书");
+
+    const int total = (int)st.book.content.size();
+    const int count = (int)st.book.chapters.size();
+    const bool usable = hasUsableToc(st.book);
+
+    int index = queryInt(req, "index", -1);
+    int line = queryInt(req, "line", -1);
+    if (line >= 0 && usable) {
+        // 找到包含该行的最后一章
+        int lo = 0, hi = count - 1, ans = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (chapterStartAt(st.book, (size_t)mid) <= line) {
+                ans = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        index = ans;
+    }
+    if (index < 0) index = 0;
+    if (usable && index >= count) return badRequest("章节序号越界");
+
+    int start = 0;
+    int end = total;
+    std::string title = st.book.title.empty() ? "全文" : st.book.title;
+    if (usable) {
+        start = chapterStartAt(st.book, (size_t)index);
+        end = chapterEndAt(st.book, (size_t)index);
+        title = st.book.chapters[(size_t)index];
+    }
+
+    int limit = queryInt(req, "limit", 4000);
+    if (limit < 1) limit = 4000;
+    if (limit > 10000) limit = 10000;
+    int outEnd = end;
+    bool truncated = false;
+    if (outEnd - start > limit) {
+        outEnd = start + limit;
+        truncated = true;
+    }
+    size_t chars = chapterCharCount(st.book, start, end);
+
+    int prevIndex = usable ? index - 1 : -1;
+    int nextIndex = usable && index + 1 < count ? index + 1 : -1;
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("count").value(count);
+    j.key("index").value(index);
+    j.key("title").value(title);
+    j.key("book").value(st.book.title);
+    j.key("start").value(start);
+    j.key("end").value(end);
+    j.key("total").value(total);
+    j.key("paragraphs").value(end - start);
+    j.key("chars").value((int)chars);
+    j.key("minutes").value(chapterMinutes(chars));
+    j.key("fallback").value(!usable);
+    j.key("truncated").value(truncated);
+    j.key("prevIndex").value(prevIndex);
+    j.key("prevTitle").value(prevIndex >= 0 ? st.book.chapters[(size_t)prevIndex] : "");
+    j.key("prevLine").value(prevIndex >= 0 ? chapterStartAt(st.book, (size_t)prevIndex) : -1);
+    j.key("nextIndex").value(nextIndex);
+    j.key("nextTitle").value(nextIndex >= 0 ? st.book.chapters[(size_t)nextIndex] : "");
+    j.key("nextLine").value(nextIndex >= 0 ? chapterStartAt(st.book, (size_t)nextIndex) : -1);
+    j.key("lines");
+    j.beginArray();
+    for (int i = start; i < outEnd; i++) j.value(st.book.content[i]);
     j.endArray();
     j.endObject();
     return okJson(j);
@@ -316,7 +456,13 @@ Response handleBookContent(const Request& req) {
     std::lock_guard<std::mutex> lock(st.mu);
     if (!st.loaded) return badRequest("尚未打开任何书");
 
-    int pageSize = st.linesPerPage;
+    // raw=1：返回未经折行的原始段落，供 GUI 前端自行排版（首行缩进、字号、行距）。
+    // 默认行为与 TUI / 既有客户端一致，仍返回按 80 列折行后的文本行。
+    // 目录接口 /api/book/toc 的 line 是原始段落行号，raw 模式下可直接对齐。
+    bool raw = queryInt(req, "raw", 0) != 0;
+    const std::vector<std::string>& source =
+        raw ? st.book.content : st.book.wrappedContent;
+    int pageSize = raw ? 40 : st.linesPerPage;
     int page = queryInt(req, "page", 0);
     int start = 0;
     int end = 0;
@@ -334,7 +480,7 @@ Response handleBookContent(const Request& req) {
         end = start + pageSize;
     }
 
-    int total = (int)st.book.wrappedContent.size();
+    int total = (int)source.size();
     if (start > total) start = total;
     if (end > total) end = total;
 
@@ -342,11 +488,86 @@ Response handleBookContent(const Request& req) {
     j.beginObject();
     j.key("total").value(total);
     j.key("pageSize").value(pageSize);
+    j.key("raw").value(raw);
     j.key("start").value(start);
     j.key("end").value(end);
     j.key("lines");
     j.beginArray();
-    for (int i = start; i < end; i++) j.value(st.book.wrappedContent[i]);
+    for (int i = start; i < end; i++) j.value(source[i]);
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+// 阅读进度：复用 Config 里 TUI 也在用的 readProgress，GUI 与 TUI 共享同一份记录。
+// POST 请求体里的数值用字符串传递（本文件的 bodyString 只抽取带引号的值）。
+Response handleBookProgress(const Request& req) {
+    if (!ensureConfig()) return Response::error("配置加载失败", 500);
+
+    std::string path = req.method == "POST" ? bodyString(req.body, "path")
+                                            : queryStr(req, "path");
+    if (path.empty()) path = state().bookPath;
+    if (path.empty()) return badRequest("缺少参数 path");
+
+    if (req.method == "POST") {
+        int line = 0, percent = 0;
+        try { line = std::stoi(bodyString(req.body, "line")); } catch (...) {}
+        try { percent = std::stoi(bodyString(req.body, "percent")); } catch (...) {}
+        if (percent < 0) percent = 0;
+        if (percent > 100) percent = 100;
+        state().cfg.setProgress(path, line, percent);
+    }
+
+    // ReadProgress / Bookmark 是 Config 的私有嵌套类型，用 auto 推导避免显式命名。
+    auto p = state().cfg.getProgress(path);
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("path").value(path);
+    j.key("line").value(p.line);
+    j.key("percent").value(p.percent);
+    j.key("updatedAt").value(p.updatedAt);
+    j.endObject();
+    return okJson(j);
+}
+
+// 书签：GET 列出，POST 通过 action=add|remove 增删。
+Response handleBookBookmarks(const Request& req) {
+    if (!ensureConfig()) return Response::error("配置加载失败", 500);
+
+    std::string path = req.method == "POST" ? bodyString(req.body, "path")
+                                            : queryStr(req, "path");
+    if (path.empty()) path = state().bookPath;
+    if (path.empty()) return badRequest("缺少参数 path");
+
+    if (req.method == "POST") {
+        std::string action = bodyString(req.body, "action");
+        int line = 0;
+        try { line = std::stoi(bodyString(req.body, "line")); } catch (...) {}
+        if (action == "add") {
+            state().cfg.addBookmark(path, line, bodyString(req.body, "note"));
+        } else if (action == "remove") {
+            state().cfg.removeBookmark(path, line);
+        } else {
+            return badRequest("action 只支持 add / remove");
+        }
+    }
+
+    const auto& marks = state().cfg.getBookmarks(path);
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("path").value(path);
+    j.key("count").value((int)marks.size());
+    j.key("bookmarks");
+    j.beginArray();
+    for (const auto& bm : marks) {
+        j.beginObject();
+        j.key("line").value(bm.line);
+        j.key("note").value(bm.note);
+        j.key("createdAt").value(bm.createdAt);
+        j.endObject();
+    }
     j.endArray();
     j.endObject();
     return okJson(j);
@@ -369,18 +590,23 @@ Response handleBookSearch(const Request& req) {
         return s;
     };
     std::string needle = fold(q);
+    // raw=1 时搜索原始段落并返回原始行号，便于 GUI 直接跳转；默认保持折行行号。
+    bool raw = queryInt(req, "raw", 0) != 0;
+    const std::vector<std::string>& source =
+        raw ? st.book.content : st.book.wrappedContent;
 
     Json j;
     j.beginObject();
     j.key("query").value(q);
+    j.key("raw").value(raw);
     j.key("matches");
     j.beginArray();
     int found = 0;
-    for (size_t i = 0; i < st.book.wrappedContent.size() && found < limit; i++) {
-        if (fold(st.book.wrappedContent[i]).find(needle) == std::string::npos) continue;
+    for (size_t i = 0; i < source.size() && found < limit; i++) {
+        if (fold(source[i]).find(needle) == std::string::npos) continue;
         j.beginObject();
         j.key("line").value((int)i);
-        j.key("text").value(st.book.wrappedContent[i]);
+        j.key("text").value(source[i]);
         j.endObject();
         found++;
     }
@@ -1019,8 +1245,13 @@ void registerRoutes(Server& server) {
     server.route("GET", "/api/book/open", handleBookOpen);
     server.route("GET", "/api/book/info", handleBookInfo);
     server.route("GET", "/api/book/toc", handleBookToc);
+    server.route("GET", "/api/book/chapter", handleBookChapter);
     server.route("GET", "/api/book/content", handleBookContent);
     server.route("GET", "/api/book/search", handleBookSearch);
+    server.route("GET",  "/api/book/progress",  handleBookProgress);
+    server.route("POST", "/api/book/progress",  handleBookProgress);
+    server.route("GET",  "/api/book/bookmarks", handleBookBookmarks);
+    server.route("POST", "/api/book/bookmarks", handleBookBookmarks);
 
 #ifdef HAS_CURL
     // 番茄
@@ -1062,6 +1293,11 @@ void registerRoutes(Server& server) {
     server.route("POST", "/api/config", handleConfigSet);
     server.route("POST", "/api/config/dir/add", handleConfigDirAdd);
     server.route("POST", "/api/config/dir/remove", handleConfigDirRemove);
+
+#ifdef HAS_GUI
+    // 编译进 GUI 时，"--serve" 也会顺带提供阅读器页面
+    gui::registerRoutes(server);
+#endif
 }
 
 } // namespace api

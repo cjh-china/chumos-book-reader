@@ -83,11 +83,13 @@
 | LOCAL_MUSIC_API_BASE | http://127.0.0.1:3000 | 本地 API 地址 |
 | STATIC_LINK | OFF | Windows 下把所有第三方库静态编入 exe，产物不依赖任何 DLL |
 | ENABLE_API | OFF | 以 HTTP API 方式暴露全部功能（`--serve`，不启动 TUI） |
+| ENABLE_GUI | OFF | 编译番茄小说手机版风格的图形阅读界面（`--gui`），会自动开启 ENABLE_API |
 
 ### 依赖关系
 
     ENABLE_LOCAL_MUSIC_API  ->  需要 ENABLE_MUSIC
     ENABLE_MUSIC            ->  需要 libcurl + OpenSSL（网易云 eapi 的 AES/MD5）
+    ENABLE_GUI              ->  自动开启 ENABLE_API（GUI 页面要调用这些 JSON 接口）
     EMBED_FANQIE            ->  需要 tools/tomato/ 下有下载器源文件
     STATIC_LINK             ->  需要 pkg-config 与 libcurl / zlib 的 .a 静态库
 
@@ -103,6 +105,45 @@
     -- Fanqie: EXTERNAL (copied to output dir)
     -- Music player enabled
     -- Local music API enabled: http://127.0.0.1:3000
+
+### 图形阅读界面（ENABLE_GUI）
+
+```bash
+cmake -S . -B build_gui -DENABLE_GUI=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build_gui
+build_gui/ebook_reader.exe --gui --port 8686
+```
+
+- **实现方式**：`web/reader.html` 是唯一的页面源文件。CMake 在配置时把它原样
+  包成 C++ raw string，生成 `build_gui/generated/gui_page.cpp` 并编译进 exe；
+  运行时由程序自带的 HTTP 服务提供 `GET /`。不需要把 HTML/CSS/JS 拷到输出目录，
+  也不需要 Qt / WebView2 / Electron，拷走单个 exe 就能用。改页面后直接重新
+  `cmake --build`，CMake 会检测到内容变化并重新生成。
+- **`--gui`**：后台线程起 HTTP 服务并打开独立窗口，关闭窗口即停止服务。
+  Windows 优先用 Edge（其次 Chrome）的 `--app` 模式，profile 独立放在
+  `%APPDATA%\ebook_reader\gui_profile`，不会影响日常浏览器；
+  Linux/macOS 用 `xdg-open` / `open` 打开默认浏览器（普通标签页，按回车结束服务）。
+- 也可以 `ebook_reader --serve --port 8686` 后自己打开 `http://127.0.0.1:8686/`；
+  开启 GUI 编译时 `--serve` 同样会提供页面。
+- **默认 OFF 时完全不编译** `src/gui.cpp` 和内嵌页面，CLI / TUI / `--serve` 行为不变。
+
+界面能力：书架（自动扫 exe 同级 `downloads/` 与配置登记目录）、继续阅读、
+沉浸式正文（原始段落排版，首行缩进）、点击中间呼出工具栏、左右点击翻屏、
+章节目录（章节名/章号搜索、正序倒序、字数与预计阅读时长、当前章高亮定位）、
+**查看并阅读指定章节**（目录里点 👁 打开该章全文，可上一章 / 下一章切换，
+或点「从这里阅读」跳进正文）、底部上一章 / 下一章按钮与本章进度、
+自动滚屏阅读（慢 / 标准 / 快三档，点屏幕暂停，读至书末自动停止）、
+字号 / 行距 / 段间距 / 四套主题 / 亮度遮罩、书签、阅读进度、
+书内全文搜索、书库目录增删改。快捷键：`←` / `→` 切章、`A` 自动阅读、
+`T` 打开目录、`Esc` 关闭面板。阅读设置存浏览器 localStorage；进度与书签存
+`ebook_reader.config.json`，与 TUI 共用同一份记录。
+
+配套新增接口（`ENABLE_API` 下即可用，不依赖 GUI）：
+`/api/book/content?raw=1&line=&count=`、`/api/book/search?raw=1`、
+`/api/book/toc`（每项含 `end` / `paragraphs` / `chars` / `minutes`）、
+`/api/book/chapter?index=N`（返回该章完整原始段落及 `prevIndex` / `nextIndex` 等
+定位信息，也可用 `line=N` 定位所在章节，`limit=` 限制单次返回段数）、
+`GET|POST /api/book/progress`、`GET|POST /api/book/bookmarks`。
 
 ---
 

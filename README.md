@@ -2,7 +2,9 @@
 
 A cross-platform command-line ebook reader with a built-in music player.
 
-Runs on Windows, Linux and macOS. Pure terminal UI, no GUI dependencies.
+Runs on Windows, Linux and macOS. The default build is a pure terminal UI;
+`-DENABLE_GUI=ON` optionally adds a mobile-style graphical reader without any
+GUI toolkit dependency.
 
 ## Features
 
@@ -74,6 +76,32 @@ runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 - **Hi-res audio**: after login the client requests `lossless` and falls back through
   `exhigh` → `higher` → `standard` → 128k MP3 when the account lacks rights.
 
+### Graphical reader (`-DENABLE_GUI=ON`)
+
+An optional build flag adds a phone-shaped, Fanqie-style reading UI: immersive
+scrolling text, tap-to-reveal toolbars, a searchable / reversible chapter drawer,
+a chapter viewer that opens one specific chapter's full text with previous / next
+chapter navigation, chapter jump buttons and in-chapter progress, three-speed
+auto-scroll reading, font / line-spacing / theme controls, brightness dimming,
+bookmarks, progress sync and full-text search.
+
+The page is a single HTML file (`web/reader.html`) embedded into the executable
+at compile time and served by the program's own loopback HTTP server — no Qt,
+WebView2, Electron or runtime web assets are required. `ENABLE_GUI=ON`
+automatically enables `ENABLE_API`, because the UI consumes those JSON endpoints.
+
+```bash
+cmake -S . -B build_gui -DENABLE_GUI=ON
+cmake --build build_gui
+./build_gui/ebook_reader.exe --gui          # opens a standalone app window
+# or: ./build_gui/ebook_reader.exe --serve  # then open http://127.0.0.1:8686/ yourself
+```
+
+On Windows the window uses Edge (or Chrome) in `--app` mode with an isolated
+profile at `%APPDATA%\ebook_reader\gui_profile`; other platforms fall back to the
+default browser. Closing the window stops the server. With the flag off (the
+default) the CLI, TUI and `--serve` behaviour are completely unchanged.
+
 ### HTTP API test mode (`-DENABLE_API=ON`)
 
 Build with `-DENABLE_API=ON` and run `ebook_reader --serve [--port 8686] [--host 127.0.0.1]`
@@ -86,9 +114,12 @@ testing; the server is single-threaded and binds to loopback by default.
 | GET | `/api/library[?dir=&depth=]` | list books |
 | GET/POST | `/api/book/open` | open a book (`path`) |
 | GET | `/api/book/info` | title, author, page count |
-| GET | `/api/book/toc` | chapter list |
-| GET | `/api/book/content?page=N` | page of wrapped lines (or `line`/`count`) |
-| GET | `/api/book/search?q=` | in-book search |
+| GET | `/api/book/toc` | chapter list with `end`, `paragraphs`, `chars`, `minutes` per chapter |
+| GET | `/api/book/chapter?index=N` | full text of one chapter; `line=N` selects the chapter containing that paragraph, `limit=` caps returned paragraphs |
+| GET | `/api/book/content?page=N` | page of wrapped lines (or `line`/`count`; add `raw=1` for un-wrapped paragraphs) |
+| GET | `/api/book/search?q=` | in-book search (`raw=1` returns original paragraph line numbers) |
+| GET/POST | `/api/book/progress?path=` | read / save reading position (shared with TUI) |
+| GET/POST | `/api/book/bookmarks?path=` | list / add / remove bookmarks |
 | GET | `/api/fanqie/search?q=` | Fanqie search |
 | POST | `/api/fanqie/download` | download a Fanqie book |
 | GET | `/api/sonovel/search?q=` | so-novel aggregated search |

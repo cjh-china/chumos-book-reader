@@ -124,6 +124,19 @@ endif()
 # 不进入 TUI，适合自动化测试。默认关闭。
 option(ENABLE_API "Expose all features as HTTP API endpoints (test mode)" OFF)
 
+# ==================== 可选：GUI 阅读界面 ====================
+# 模拟番茄小说手机版的沉浸式阅读界面。实现为内嵌在 exe 里的单页 Web UI，
+# 运行时由本进程的 HTTP 服务提供，用系统 Edge/Chrome 的 --app 模式开独立窗口，
+# 不引入 Qt / WebView2 / 任何 GUI 库依赖。默认关闭。
+option(ENABLE_GUI "Build the mobile-style GUI reader (embedded web UI, no GUI toolkit)" OFF)
+if(ENABLE_GUI)
+    if(NOT ENABLE_API)
+        set(ENABLE_API ON CACHE BOOL "Expose all features as HTTP API endpoints (test mode)" FORCE)
+        message(STATUS "ENABLE_GUI implies ENABLE_API: enabled automatically")
+    endif()
+    add_definitions(-DHAS_GUI)
+endif()
+
 # ==================== 可选：音乐播放器 ====================
 # 默认关闭。开启后包含本地曲库、歌词、歌单、在线搜索等完整功能。
 # 依赖：libcurl（在线搜索）、miniaudio（third_party/ 内置）、Windows winmm/ole32
@@ -255,6 +268,35 @@ if(ENABLE_API)
         src/api_routes.cpp
     )
     message(STATUS "HTTP API test server enabled (--serve)")
+endif()
+
+# ==================== GUI 页面内嵌 ====================
+# 把 web/reader.html 原样包成 C++ raw string 生成 gui_page.cpp：
+# 运行时不依赖任何外部文件，直接拷走单个 exe 也能用。
+# 仅在内容变化时重写，避免每次 configure 都触发重编译。
+if(ENABLE_GUI)
+    set(GUI_PAGE_HTML "${CMAKE_SOURCE_DIR}/web/reader.html")
+    if(NOT EXISTS "${GUI_PAGE_HTML}")
+        message(FATAL_ERROR "ENABLE_GUI requires ${GUI_PAGE_HTML}")
+    endif()
+    # 让 Ninja/Make 在页面改动后自动重新配置，否则只改 HTML 时 build 会认为无事可做。
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GUI_PAGE_HTML}")
+    file(READ "${GUI_PAGE_HTML}" GUI_PAGE_CONTENT)
+    set(GUI_PAGE_CPP "${CMAKE_BINARY_DIR}/generated/gui_page.cpp")
+    set(GUI_PAGE_SRC
+        "#include \"gui.h\"\n\n// 由 CMake 从 web/reader.html 生成，请勿手工编辑。\nnamespace gui {\nconst char* readerPage() {\n    static const char* page = R\"GUI_PAGE(${GUI_PAGE_CONTENT})GUI_PAGE\";\n    return page;\n}\n}\n")
+    set(_gui_old "")
+    if(EXISTS "${GUI_PAGE_CPP}")
+        file(READ "${GUI_PAGE_CPP}" _gui_old)
+    endif()
+    if(NOT _gui_old STREQUAL GUI_PAGE_SRC)
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+        file(WRITE "${GUI_PAGE_CPP}" "${GUI_PAGE_SRC}")
+    endif()
+    set_source_files_properties("${GUI_PAGE_CPP}" PROPERTIES GENERATED TRUE)
+
+    target_sources(ebook_reader PRIVATE src/gui.cpp "${GUI_PAGE_CPP}")
+    message(STATUS "GUI reader enabled (--gui, or --serve and open /)")
 endif()
 
 # 外置模式：构建后把下载器与配置复制到输出目录
