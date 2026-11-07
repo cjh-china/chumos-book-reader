@@ -78,12 +78,24 @@ runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 
 ### Graphical reader (`-DENABLE_GUI=ON`)
 
-An optional build flag adds a phone-shaped, Fanqie-style reading UI: immersive
-scrolling text, tap-to-reveal toolbars, a searchable / reversible chapter drawer,
-a chapter viewer that opens one specific chapter's full text with previous / next
-chapter navigation, chapter jump buttons and in-chapter progress, three-speed
-auto-scroll reading, font / line-spacing / theme controls, brightness dimming,
-bookmarks, progress sync and full-text search.
+An optional build flag adds a phone-shaped, Fanqie-style app with four tabs
+(**Bookshelf / Bookstore / Music / Me**). The reader has immersive scrolling
+text, tap-to-reveal toolbars, a searchable / reversible chapter drawer, a chapter
+viewer that opens one specific chapter's full text with previous / next chapter
+navigation, chapter jump buttons and in-chapter progress, a "next chapter" prompt
+at chapter end, three-speed auto-scroll reading, four fonts / line-spacing /
+four themes / brightness / page-turn animation controls, bookmarks, progress sync
+and full-text search. Long-pressing a paragraph offers copy, highlight, read-from-
+here (text-to-speech) and bookmark. **Listen to a book** via the browser speech
+engine with speed, voice, sleep timer and automatic next-chapter playback.
+
+The **Bookstore** tab searches the local library and (optionally) the Fanqie and
+so-novel sources: hot searches, search history, "continue reading" and
+recommendations, per-book details (intro, chapter count, word count, progress),
+"read now" and "add to shelf" (downloads into `downloads/`). The **Me** tab shows
+reading statistics (today / total / streak / per-book time), bookshelf sorting and
+grid-list switch, hidden-book restore, and shortcuts to reader / library / TTS
+settings. Chapter detection now rejects body sentences such as "第二章第1段，……".
 
 A **Music** tab is included as well: a local library player (with Range/seek
 support), online search, NetEase daily recommendations / playlists / toplists, QR
@@ -123,7 +135,9 @@ testing; the server is single-threaded and binds to loopback by default.
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/health` | status + compiled-in capabilities |
-| GET | `/api/library[?dir=&depth=]` | list books |
+| GET | `/api/library[?dir=&depth=]` | list books (each with `percent`, `lastLine`, `updatedAt` progress) |
+| GET | `/api/library/detail?path=` | parse one book on demand: intro, word / chapter count, TOC preview and progress (does not change the open book) |
+| GET | `/api/search?q=[&online=1]` | unified local-library search; `online=1` also embeds Fanqie / so-novel results |
 | GET/POST | `/api/book/open` | open a book (`path`) |
 | GET | `/api/book/info` | title, author, page count |
 | GET | `/api/book/toc` | chapter list with `end`, `paragraphs`, `chars`, `minutes` per chapter |

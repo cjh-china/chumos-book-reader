@@ -19,11 +19,37 @@ bool Parser::isChapterTitle(const std::string& line) {
     // 180 字节 ≈ 60 个汉字，足够容纳绝大多数章节标题
     if (s.size() > 180) return false;
 
-    // 中文：必须以「第」开头
+    // 中文：必须以「第」开头，且「章/节/回/卷/篇」后面是标题边界。
+    // 若不校验边界，「第二章第1段，……」这类正文句子会被误判成章节标题。
     if (s.size() >= 6 && s.compare(0, 3, "第") == 0) {
         static const char* seps[] = {"章", "节", "回", "卷", "篇"};
         for (const char* sep : seps) {
-            if (s.find(sep) != std::string::npos) return true;
+            size_t p = s.find(sep);
+            if (p == std::string::npos) continue;
+            size_t next = p + 3;  // 分隔符本身是 3 字节 UTF-8 汉字
+            bool ok = true;
+            if (next < s.size()) {
+                unsigned char c = (unsigned char)s[next];
+                bool boundary = std::isspace(c) || c == ':' || c == '-' ||
+                                c == '(' || c == '[';
+                static const std::string marks[] = {
+                    "：", "·", "—", "、", "（", "【"
+                };
+                for (const auto& mk : marks) {
+                    if (next + mk.size() <= s.size() &&
+                        s.compare(next, mk.size(), mk) == 0) { boundary = true; break; }
+                }
+                if (!boundary) {
+                    // 兼容「第一章初入江湖」这类无分隔短标题，但不接受带句读的长句
+                    std::string rest = s.substr(next);
+                    const char* punct[] = {"，", "。", "！", "？", "；", ",", "."};
+                    for (const char* q : punct) {
+                        if (rest.find(q) != std::string::npos) { ok = false; break; }
+                    }
+                    if (rest.size() > 24) ok = false;
+                }
+            }
+            if (ok) return true;
         }
     }
 

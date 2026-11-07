@@ -182,9 +182,12 @@ Response handleHealth(const Request&) {
     j.key("version").value("1.0.0");
     std::vector<std::string> caps;
     caps.push_back("reading");
+    caps.push_back("search");
+    caps.push_back("library-detail");
 #ifdef HAS_CURL
     caps.push_back("fanqie");
     caps.push_back("sonovel");
+    caps.push_back("online-books");
 #endif
 #ifdef HAS_MUSIC
     caps.push_back("music");
@@ -204,18 +207,17 @@ Response handleHealth(const Request&) {
     return okJson(j);
 }
 
-Response handleLibrary(const Request& req) {
-    if (!ensureConfig()) return Response::error("配置加载失败", 500);
-
-    std::string dir = queryStr(req, "dir");
-    int maxDepth = queryInt(req, "depth", 4);
-
-    std::vector<std::string> files;
+// 汇总书库文件：默认扫描 downloads/ + 配置登记目录，dir 非空时只扫描该目录。
+// 供 /api/library、/api/search 复用，保证两处看到的书库完全一致。
+bool gatherLibraryFiles(const std::string& dir, int maxDepth,
+                        std::vector<std::string>& files,
+                        std::string& err, int& status) {
+    files.clear();
+    if (!ensureConfig()) { err = "配置加载失败"; status = 500; return false; }
     if (!dir.empty()) {
-        if (!fsutil::isDirectory(dir)) return badRequest("目录不存在: " + dir);
+        if (!fsutil::isDirectory(dir)) { err = "目录不存在: " + dir; status = 400; return false; }
         files = Config::scanDir(dir, maxDepth);
     } else {
-        // 默认：downloads/ + 配置里登记的目录
         std::string dl = downloadDir();
         if (!dl.empty() && fsutil::isDirectory(dl)) {
             files = Config::scanDir(dl, maxDepth);
@@ -229,18 +231,89 @@ Response handleLibrary(const Request& req) {
 
     std::sort(files.begin(), files.end());
     files.erase(std::unique(files.begin(), files.end()), files.end());
+    return true;
+}
+
+// 把一本书的常用字段写进 JSON（书库列表 / 搜索结果共用）。
+void writeLibraryBook(Json& j, const std::string& f) {
+    j.beginObject();
+    j.key("path").value(f);
+    j.key("name").value(fsutil::filename(f));
+    j.key("size").value((long long)fsutil::fileSize(f));
+    j.key("mtime").value((long long)fsutil::lastWriteMs(f));
+    auto p = state().cfg.getProgress(f);
+    j.key("percent").value(p.percent);
+    j.key("lastLine").value(p.line);
+    j.key("updatedAt").value(p.updatedAt);
+    j.endObject();
+}
+
+Response handleLibrary(const Request& req) {
+    std::vector<std::string> files;
+    std::string err;
+    int status = 500;
+    if (!gatherLibraryFiles(queryStr(req, "dir"), queryInt(req, "depth", 4),
+                            files, err, status)) {
+        return Response::error(err, status);
+    }
 
     Json j;
     j.beginObject();
     j.key("count").value((int)files.size());
     j.key("books");
     j.beginArray();
-    for (const auto& f : files) {
+    for (const auto& f : files) writeLibraryBook(j, f);
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+// 书籍详情：按需解析单本书，不改变当前正在阅读的书。
+Response handleLibraryDetail(const Request& req) {
+    std::string path = queryStr(req, "path");
+    if (path.empty()) return badRequest("缺少参数 path");
+    if (!fsutil::isFile(path)) return notFound("文件不存在: " + path);
+
+    Book book;
+    if (!Parser::parse(path, book)) return Response::error("解析失败: " + path, 500);
+
+    size_t chars = 0;
+    for (const auto& line : book.content) chars += line.size();
+    std::string intro;
+    for (const auto& line : book.content) {
+        size_t b = line.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos || Parser::isChapterTitle(line)) continue;
+        if (!intro.empty()) intro += "  ";
+        intro += line.substr(b);
+        if (intro.size() >= 180) break;
+    }
+    if (intro.size() >= 180) intro += "…";
+
+    if (!ensureConfig()) return Response::error("配置加载失败", 500);
+    auto p = state().cfg.getProgress(path);
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("path").value(path);
+    j.key("name").value(fsutil::filename(path));
+    j.key("title").value(book.title);
+    j.key("author").value(book.author);
+    j.key("intro").value(intro);
+    j.key("size").value((long long)fsutil::fileSize(path));
+    j.key("mtime").value((long long)fsutil::lastWriteMs(path));
+    j.key("lines").value((int)book.content.size());
+    j.key("chars").value((int)chars);
+    j.key("chapters").value((int)book.chapters.size());
+    j.key("percent").value(p.percent);
+    j.key("lastLine").value(p.line);
+    j.key("toc");
+    j.beginArray();
+    for (size_t i = 0; i < book.chapters.size() && i < 12; i++) {
         j.beginObject();
-        j.key("path").value(f);
-        j.key("name").value(fsutil::filename(f));
-        j.key("size").value((long long)fsutil::fileSize(f));
-        j.key("mtime").value((long long)fsutil::lastWriteMs(f));
+        j.key("index").value((int)i);
+        j.key("title").value(book.chapters[i]);
+        j.key("line").value(i < book.chapterStarts.size() ? book.chapterStarts[i] : 0);
         j.endObject();
     }
     j.endArray();
@@ -916,6 +989,67 @@ Response handleSoNovelDownload(const Request& req) {
 
 #endif // HAS_CURL
 
+// 统一搜索：本地书库按文件名匹配，online=1 时附带番茄 / so-novel 在线书源结果。
+// 在线结果直接嵌入各书源接口的原始 JSON，前端可以按书源分别渲染。
+Response handleSearch(const Request& req) {
+    std::string q = queryStr(req, "q");
+    if (q.empty()) return badRequest("缺少参数 q");
+
+    std::string needle = q;
+    for (char& c : needle) c = (char)std::tolower((unsigned char)c);
+
+    std::vector<std::string> files;
+    std::string err;
+    int status = 500;
+    if (!gatherLibraryFiles(queryStr(req, "dir"), queryInt(req, "depth", 4),
+                            files, err, status)) {
+        return Response::error(err, status);
+    }
+
+    std::vector<std::string> hits;
+    for (const auto& f : files) {
+        std::string name = fsutil::filename(f);
+        for (char& c : name) c = (char)std::tolower((unsigned char)c);
+        if (name.find(needle) != std::string::npos) hits.push_back(f);
+    }
+    const bool truncated = hits.size() > 200;
+    if (truncated) hits.resize(200);
+
+    bool wantOnline = queryStr(req, "online") == "1";
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("q").value(q);
+    j.key("count").value((int)hits.size());
+    j.key("truncated").value(truncated);
+    j.key("local");
+    j.beginArray();
+    for (const auto& f : hits) writeLibraryBook(j, f);
+    j.endArray();
+    j.key("online").value(wantOnline);
+#ifdef HAS_CURL
+    j.key("hasOnline").value(true);
+    if (wantOnline) {
+        Request sub;
+        sub.method = "GET";
+        sub.query["q"] = q;
+        sub.path = "/api/fanqie/search";
+        std::string fb = handleFanqieSearch(sub).body;
+        j.key("fanqie");
+        j.raw(fb.empty() ? "{}" : fb);
+        sub.path = "/api/sonovel/search";
+        std::string sb = handleSoNovelSearch(sub).body;
+        j.key("sonovel");
+        j.raw(sb.empty() ? "{}" : sb);
+    }
+#else
+    j.key("hasOnline").value(false);
+    if (wantOnline) j.key("hint").value("在线书源需要 -DENABLE_CURL=ON 重新编译");
+#endif
+    j.endObject();
+    return okJson(j);
+}
+
 #ifdef HAS_MUSIC
 
 Response handleMusicLibrary(const Request& req) {
@@ -1434,6 +1568,8 @@ void registerRoutes(Server& server) {
 
     // 书库
     server.route("GET", "/api/library", handleLibrary);
+    server.route("GET", "/api/library/detail", handleLibraryDetail);
+    server.route("GET", "/api/search", handleSearch);
 
     // 阅读
     server.route("POST", "/api/book/open", handleBookOpen);
