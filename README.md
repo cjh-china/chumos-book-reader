@@ -78,8 +78,13 @@ runtime, no extra process. Requires `-DENABLE_MUSIC=ON`.
 
 ### Graphical reader (`-DENABLE_GUI=ON`)
 
-An optional build flag adds a phone-shaped, Fanqie-style app with four tabs
-(**Bookshelf / Bookstore / Music / Me**). The reader has immersive scrolling
+An optional build flag adds a graphical app laid out like **Koodo Reader**: a
+left library sidebar (all books / store / music / me, plus TOC, bookmarks and
+library folders), a top toolbar with search, sort, refresh, theme and import,
+and a wide book grid. On windows narrower than 900 px it falls back to the
+original phone-shaped, Fanqie-style layout with four bottom tabs.
+
+The reader has immersive scrolling
 text, tap-to-reveal toolbars, a searchable / reversible chapter drawer, a chapter
 viewer that opens one specific chapter's full text with previous / next chapter
 navigation, chapter jump buttons and in-chapter progress, a "next chapter" prompt

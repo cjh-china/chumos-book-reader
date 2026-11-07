@@ -542,11 +542,375 @@ input[type=range]{accent-color:var(--accent)}
 .tts-voices{max-height:150px;overflow-y:auto}
 .tts-voices .list-item{padding:10px 18px}
 @media (max-width:380px){.tool-row button{font-size:9px}.tool-row .ti{font-size:18px}}
+
+/* ================================================================
+   Koodo Reader 风格桌面布局
+   - 左侧分类导航 + 顶部工具栏 + 主内容区
+   - 阅读时切换为沉浸式：左侧工具栏 / 右侧阅读选项 / 常驻进度条
+   - 只在桌面宽度启用；窄屏自动回退到上面的手机版布局
+   ================================================================ */
+.app-side,.app-topbar,.reader-rail,.view-switch,.shelf-toolbar{display:none}
+body.desktop{background:#f5f6f8}
+body.desktop[data-theme="night"]{background:#171a1f}
+body.desktop .stage{display:block;width:100%;height:100%;gap:0}
+body.desktop .stage-hint{display:none}
+body.desktop .phone{
+  --side-w:216px;--rail-w:56px;--top-h:56px;--read-w:760px;--bottom-h:92px;
+  --shell:#f5f6f8;--card:#ffffff;--shell-fg:#2f3237;--shell-sub:#89909a;
+  --shell-line:#e5e8ed;--side:#eef0f4;--accent:#3a6fd8;
+  width:100vw;height:100vh;border-radius:0;box-shadow:none;
+  background:var(--shell);color:var(--shell-fg)}
+body.desktop .phone[data-theme="night"]{
+  --shell:#171a1f;--card:#22262c;--shell-fg:#e3e6ec;--shell-sub:#8b919c;
+  --shell-line:#31363e;--side:#13161a;--accent:#6b9bef}
+body.desktop .phone[data-layout="narrow"]{--read-w:640px}
+body.desktop .phone[data-layout="wide"]{--read-w:1040px}
+body.desktop .phone.side-collapsed,body.desktop .phone.reading{--side-w:0px}
+body.desktop .statusbar,body.desktop .tabbar,body.desktop .reader-foot{display:none!important}
+body.desktop .view{top:var(--top-h);right:0;bottom:0;left:var(--side-w)}
+body.desktop .phone.reading .view{top:0;left:0}
+
+/* ---- 左侧分类导航 ---- */
+body.desktop .app-side{
+  display:flex;position:absolute;left:0;top:0;bottom:0;width:216px;z-index:20;
+  background:var(--side);border-right:1px solid var(--shell-line);
+  flex-direction:column;padding:14px 12px 12px;overflow:hidden;
+  transition:transform .22s ease}
+body.desktop .phone.side-collapsed .app-side,
+body.desktop .phone.reading .app-side{transform:translateX(-100%)}
+.side-brand{display:flex;align-items:center;gap:10px;padding:4px 8px 20px}
+.side-brand .brand-mark{width:32px;height:32px;border-radius:9px;background:var(--accent);
+  color:#fff;display:grid;place-items:center;font-size:17px;flex:none}
+.side-brand b{display:block;font-size:14px;letter-spacing:.2px}
+.side-brand small{display:block;font-size:10px;color:var(--shell-sub);margin-top:2px}
+.side-label{font-size:10px;letter-spacing:1.2px;color:var(--shell-sub);
+  padding:12px 10px 6px;text-transform:uppercase}
+.side-item{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+  padding:10px 12px;border-radius:9px;font-size:13px;color:var(--shell-fg);
+  margin-bottom:2px;white-space:nowrap}
+.side-item>span{width:20px;text-align:center;font-size:15px;opacity:.85;flex:none}
+.side-item i{font-style:normal;margin-left:auto;font-size:11px;color:var(--shell-sub)}
+.side-item:hover{background:rgba(127,140,160,.12)}
+.side-item.active{background:var(--shell-fg);color:var(--card);font-weight:600}
+body.desktop .phone[data-theme="night"] .side-item.active{background:#3a4049;color:#fff}
+.side-item.active i{color:inherit;opacity:.7}
+.side-spacer{flex:1}
+.side-foot{border-top:1px solid var(--shell-line);padding:12px 8px 2px;
+  font-size:10px;color:var(--shell-sub);line-height:1.9}
+.side-foot button{display:block;width:100%;text-align:left;font-size:12px;
+  color:var(--shell-fg);padding:7px 4px;margin-bottom:4px}
+.side-foot button:hover{color:var(--accent)}
+
+/* ---- 顶部工具栏 ---- */
+body.desktop .app-topbar{
+  display:flex;position:absolute;left:var(--side-w);top:0;right:0;height:var(--top-h);
+  z-index:19;background:var(--card);border-bottom:1px solid var(--shell-line);
+  align-items:center;gap:10px;padding:0 20px;transition:left .22s ease}
+.top-hamburger{font-size:19px;color:var(--shell-fg);width:32px;height:32px;
+  border-radius:8px;flex:none}
+.top-hamburger:hover{background:var(--side)}
+.top-title{font-size:14px;font-weight:700;white-space:nowrap;color:var(--shell-fg);
+  margin-right:6px}
+.top-search{display:flex;align-items:center;gap:8px;max-width:330px;flex:1;
+  background:var(--shell);border:1px solid var(--shell-line);border-radius:9px;
+  padding:7px 12px;color:var(--shell-sub)}
+.top-search input{flex:1;min-width:0;border:0;outline:0;background:none;
+  font-size:12px;color:var(--shell-fg)}
+.top-search button{font-size:13px;color:var(--shell-sub)}
+.top-spacer{flex:1}
+.top-btn{border:1px solid var(--shell-line);background:var(--card);border-radius:8px;
+  padding:7px 12px;font-size:12px;color:var(--shell-fg);white-space:nowrap}
+.top-btn:hover{border-color:var(--accent);color:var(--accent)}
+.top-btn.primary{background:var(--accent);color:#fff;border-color:transparent}
+.top-btn.primary:hover{opacity:.88;color:#fff}
+.top-btn.icon-only{padding:7px 9px;font-size:14px}
+
+/* ---- 主内容区：书架 / 书城 / 我的 / 音乐 ---- */
+body.desktop #shelf,body.desktop #store,body.desktop #profile,body.desktop #music{background:var(--shell)}
+body.desktop .shelf-head,body.desktop .store-head,body.desktop .profile-head,
+body.desktop .music-head{
+  background:var(--card);color:var(--shell-fg);border-bottom:1px solid var(--shell-line);
+  display:flex;align-items:center;gap:16px;padding:14px 28px;flex:none}
+body.desktop .music-head{display:block;padding:12px 28px}
+body.desktop .shelf-head h1,body.desktop .store-head h1,
+body.desktop .profile-head h1,body.desktop .music-head h1{
+  font-size:17px;letter-spacing:0;margin:0;white-space:nowrap}
+body.desktop .shelf-head h1 .dot,body.desktop .music-head h1 .dot{
+  background:var(--accent);color:#fff;border-radius:7px;font-size:12px;width:20px;height:20px}
+body.desktop .shelf-sub,body.desktop .store-sub,body.desktop .profile-sub,
+body.desktop .mh-sub{margin:0;flex:1;font-size:11px;color:var(--shell-sub);opacity:1}
+body.desktop .head-act{position:static;flex:none;border:1px solid var(--shell-line);
+  color:var(--shell-fg);border-radius:8px;padding:6px 12px;font-size:11px;background:var(--card)}
+body.desktop .head-act:hover{border-color:var(--accent);color:var(--accent)}
+body.desktop .mh-row{display:flex;align-items:center;gap:12px}
+body.desktop .mh-row h1{flex:1}
+body.desktop .mh-row button{background:var(--shell);color:var(--shell-fg);
+  border:1px solid var(--shell-line)}
+
+body.desktop .shelf-tools{display:flex;align-items:center;gap:10px;
+  padding:14px 28px 8px;background:transparent;flex:none}
+body.desktop .shelf-tools .search-box{max-width:330px;background:var(--card);
+  border:1px solid var(--shell-line);color:var(--shell-sub)}
+body.desktop .shelf-tools .search-box input{color:var(--shell-fg)}
+body.desktop .go-btn{background:var(--accent);color:#fff}
+body.desktop #btnGoStore{display:none}
+body.desktop .shelf-toolbar{display:flex;align-items:center;gap:8px;margin-left:auto}
+body.desktop .view-switch{display:flex;gap:2px;padding:3px;border-radius:9px;
+  background:var(--card);border:1px solid var(--shell-line)}
+.view-switch button{width:30px;height:28px;border-radius:6px;font-size:14px;
+  color:var(--shell-sub);display:grid;place-items:center}
+.view-switch button.on{background:var(--accent);color:#fff}
+body:not(.desktop) #layoutRow{display:none}
+body.desktop .shelf-scroll{padding:0 0 70px}
+body.desktop .sec-title{padding:16px 28px 8px;color:var(--shell-sub)}
+body.desktop .continue-card{margin:8px 28px 4px;max-width:460px;
+  background:var(--card);border:1px solid var(--shell-line);box-shadow:none}
+body.desktop .continue-card .cc-icon{background:var(--accent)}
+body.desktop .continue-card .cc-name{color:var(--shell-fg)}
+body.desktop .continue-card .cc-go{color:var(--accent)}
+body.desktop .book-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+  gap:26px 22px;padding:8px 28px 30px}
+body.desktop .book-grid.cover-mode{grid-template-columns:repeat(auto-fill,minmax(172px,1fr))}
+body.desktop .book-grid.cover-mode .b-name,
+body.desktop .book-grid.cover-mode .b-size{display:none}
+body.desktop .book-grid.list-mode{padding:8px 28px 30px}
+body.desktop .book-grid.list-mode .book-item{padding:11px 2px}
+body.desktop .book-cover{border-radius:5px;box-shadow:0 4px 14px rgba(20,25,35,.13)}
+body.desktop .b-name{color:var(--shell-fg)}
+body.desktop .b-size{color:var(--shell-sub)}
+body.desktop .empty{color:var(--shell-sub)}
+body.desktop .empty button{background:var(--accent)}
+
+body.desktop .store-tools{padding:14px 28px 8px;background:transparent;gap:10px;flex:none}
+body.desktop .store-tools .search-box{max-width:420px;background:var(--card);
+  border:1px solid var(--shell-line)}
+body.desktop .store-tools .search-box input{color:var(--shell-fg)}
+body.desktop .switch-row{padding:4px 28px 12px;color:var(--shell-sub)}
+body.desktop .store-scroll,body.desktop .profile-scroll,
+body.desktop .music-scroll{background:var(--shell);color:var(--shell-fg)}
+body.desktop .store-scroll,body.desktop .profile-scroll{padding-bottom:80px}
+body.desktop .store-scroll>div,body.desktop .profile-scroll>div,
+body.desktop .music-scroll>div{max-width:1060px;margin-left:28px;margin-right:auto}
+body.desktop .sec-head{padding:18px 0 10px;color:var(--shell-fg)}
+body.desktop .sec-head .link,body.desktop .mini-btn,body.desktop .mini-btn.solid{color:var(--accent)}
+body.desktop .mini-btn,body.desktop .mini-btn.ghost{border-color:var(--shell-line)}
+body.desktop .mini-btn.solid{background:var(--accent);color:#fff;border-color:transparent}
+body.desktop .hot-chips,body.desktop .hist-row,body.desktop .pf-chips{padding:0 0 8px}
+body.desktop .hot-chips .chip,body.desktop .hist-row .chip,body.desktop .pf-chips .chip{
+  background:var(--card);border:1px solid var(--shell-line);color:var(--shell-fg)}
+body.desktop .hot-chips .chip.hot{border-color:var(--accent);color:var(--accent);background:var(--card)}
+body.desktop .pf-chips .chip.on,body.desktop .hot-chips .chip.on{background:var(--accent);color:#fff}
+body.desktop .rec-cover{box-shadow:0 4px 14px rgba(20,25,35,.12)}
+body.desktop .rec-name{color:var(--shell-fg)}
+body.desktop .res-row{background:var(--card);border:1px solid var(--shell-line);box-shadow:none}
+body.desktop .res-name,body.desktop .pf-row,body.desktop .detail-title{color:var(--shell-fg)}
+body.desktop .res-meta,body.desktop .res-abs,body.desktop .stat-lbl,
+body.desktop .stat-line,body.desktop .pf-row .pf-sub{color:var(--shell-sub)}
+body.desktop .src-tag{background:var(--shell);color:var(--accent)}
+body.desktop .stat-card,body.desktop .pf-card{background:var(--card);
+  border:1px solid var(--shell-line);box-shadow:none}
+body.desktop .stat-num{color:var(--accent)}
+body.desktop .pf-row,body.desktop .hidden-item{border-color:var(--shell-line)}
+body.desktop .store-tip{color:var(--shell-sub)}
+body.desktop .detail-intro,body.desktop .detail-toc{color:var(--shell-fg)}
+body.desktop .da-main{background:var(--accent)}
+
+body.desktop .music-tabs{background:var(--card);border-bottom:1px solid var(--shell-line);
+  padding:0 28px;gap:2px;justify-content:flex-start}
+body.desktop .music-tabs button{flex:none;min-width:86px;padding:11px 10px;font-size:13px}
+body.desktop .music-tabs button{color:var(--shell-sub)}
+body.desktop .music-tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+body.desktop .music-scroll{padding-bottom:150px}
+body.desktop .music-sec{color:var(--shell-sub);padding-left:0;padding-right:0}
+body.desktop .music-scroll .empty{text-align:left;padding-left:0}
+body.desktop .store-scroll .sec-head{max-width:820px}
+body.desktop .song-row,body.desktop .pl-row,body.desktop .account-card,
+body.desktop .login-card{background:var(--card);border-color:var(--shell-line);color:var(--shell-fg)}
+body.desktop .song-row .sr-title,body.desktop .pl-row .pl-name,
+body.desktop .account-card .ac-name,body.desktop .login-card h3{color:var(--shell-fg)}
+body.desktop .song-row .sr-sub,body.desktop .pl-row .pl-sub,
+body.desktop .account-card .ac-meta,body.desktop .song-row .sr-time{color:var(--shell-sub)}
+body.desktop .song-row .sr-act,body.desktop .chips.music-chips,
+body.desktop .chips.music-chips .chip{background:var(--shell);color:var(--shell-fg)}
+body.desktop .chips.music-chips .chip.on{background:var(--accent);color:#fff}
+body.desktop .cap-hint{background:var(--card);color:var(--shell-sub);border:1px solid var(--shell-line)}
+body.desktop .btn-line button{background:var(--shell)}
+body.desktop .btn-line button.primary{background:var(--accent);color:#fff}
+body.desktop .btn-line button.primary:hover{color:#fff}
+body.desktop .login-card textarea{color:var(--shell-fg);border-color:var(--shell-line)}
+body.desktop .qr-tip,body.desktop .qr-url{color:var(--shell-sub)}
+body.desktop .back-row{background:var(--card);color:var(--accent)}
+
+/* ---- 阅读页：常驻工具条 / 左侧快捷栏 / 限宽正文 ---- */
+body.desktop .phone.reading .reader-rail{display:flex}
+.reader-rail{position:absolute;left:0;top:0;bottom:0;width:var(--rail-w);z-index:20;
+  background:var(--card);border-right:1px solid var(--shell-line);
+  flex-direction:column;align-items:center;gap:6px;padding:14px 0 12px}
+.reader-rail button{width:38px;height:38px;border-radius:9px;font-size:16px;
+  color:var(--shell-fg);display:grid;place-items:center;flex:none;
+  filter:grayscale(1);opacity:.82;transition:background .15s,opacity .15s}
+.reader-rail button:hover{background:var(--side);color:var(--accent);opacity:1}
+.reader-rail button.on{background:rgba(58,111,216,.12);color:var(--accent);opacity:1}
+.reader-rail .rail-sep{width:22px;height:1px;background:var(--shell-line);margin:6px 0;flex:none}
+.reader-rail .rail-spacer{flex:1}
+.reader-rail .rail-tip{font-size:8px;color:var(--shell-sub);writing-mode:vertical-rl;
+  letter-spacing:2px;opacity:.55;margin-bottom:2px}
+body.desktop .scroller{top:52px;left:var(--rail-w);right:0;bottom:0;
+  padding:26px 32px calc(var(--bottom-h) + 54px);scrollbar-width:thin}
+body.desktop #content{max-width:var(--read-w);margin:0 auto}
+body.desktop .phone.reading .topbar{
+  top:0;left:var(--rail-w);right:0;height:52px;transform:none;opacity:1;
+  pointer-events:auto;background:var(--card);border-bottom:1px solid var(--shell-line);
+  box-shadow:none;padding:0 20px;gap:10px}
+body.desktop .phone.reading .topbar .tb-title{font-size:13px;color:var(--shell-fg)}
+body.desktop .topbar .tb-stat{font-size:11px;color:var(--shell-sub);white-space:nowrap;
+  margin-right:8px}
+body.desktop .phone.reading .bottombar{
+  left:var(--rail-w);right:0;bottom:0;height:var(--bottom-h);
+  transform:none;opacity:1;pointer-events:auto;
+  background:var(--card);border-top:1px solid var(--shell-line);box-shadow:none;
+  padding:12px 24px;display:flex;flex-direction:column;justify-content:center}
+body.desktop .bottombar .chapter-row{margin-bottom:8px;color:var(--shell-sub)}
+body.desktop .bottombar .chapter-row button{color:var(--shell-fg)}
+body.desktop .progress-row{color:var(--shell-sub)}
+body.desktop .phone.reading .tool-row{display:none}
+body.desktop .tool-row{justify-content:center;gap:4px;margin-top:10px;
+  padding-top:8px;border-top:1px solid var(--shell-line)}
+body.desktop .tool-row button{flex:none;min-width:66px;font-size:10px;color:var(--shell-fg);
+  padding:4px 6px;border-radius:8px}
+body.desktop .tool-row button:hover{background:var(--side)}
+body.desktop .tool-row button.on,body.desktop .tool-row button.on .ti{color:var(--accent)}
+body.desktop .next-float{right:26px;bottom:calc(var(--bottom-h) + 18px);background:var(--accent)}
+body.desktop .para.chapter-title{color:var(--shell-fg)}
+body.desktop .para.marked{background:linear-gradient(transparent 62%,rgba(58,111,216,.26) 62%)}
+body.desktop .para.speaking{background:rgba(58,111,216,.11)}
+body.desktop .mini-player{left:auto;right:24px;bottom:18px;width:320px;height:52px;
+  background:var(--card);border:1px solid var(--shell-line)}
+body.desktop .mp-title{color:var(--shell-fg)}
+body.desktop .mini-player button{color:var(--accent)}
+
+/* ---- 面板：左右侧栏 + 居中弹窗 ---- */
+body.desktop .mask,body.desktop .mask.show{background:transparent;pointer-events:none}
+body.desktop .panel{background:var(--card);color:var(--shell-fg);
+  box-shadow:0 8px 34px rgba(15,20,30,.16);border-left:1px solid var(--shell-line)}
+body.desktop .panel-head{border-bottom:1px solid var(--shell-line)}
+body.desktop .panel-head .close{color:var(--shell-sub)}
+body.desktop .toc-tools,body.desktop .chap-meta,body.desktop .toc-foot,
+body.desktop .set-row,body.desktop .list-item,body.desktop .detail-actions,
+body.desktop .chapter-foot,body.desktop .tts-status{border-color:var(--shell-line)}
+body.desktop .toc-tools input,body.desktop .inline-form input{color:var(--shell-fg);
+  border-color:var(--shell-line)}
+body.desktop .toc-tools button,body.desktop .inline-form button,
+body.desktop .chip,body.desktop .stepper button{background:var(--shell);color:var(--shell-fg)}
+body.desktop .chip.on,body.desktop .inline-form button{background:var(--accent);color:#fff}
+body.desktop .set-row{padding:12px 16px;gap:10px}
+body.desktop .set-row .lbl{width:62px}
+body.desktop .set-row input[type="range"]{min-width:0}
+body.desktop .stepper{gap:8px}
+body.desktop .stepper .val{width:36px}
+body.desktop .set-row .lbl,body.desktop .panel-tip,body.desktop .li-sub,
+body.desktop .toc-foot,body.desktop .toc-item small{color:var(--shell-sub)}
+body.desktop .toc-item.cur,body.desktop .list-item .li-act,
+body.desktop .toc-foot button{color:var(--accent)}
+body.desktop .toc-item .eye,body.desktop .chapter-foot button{background:var(--shell)}
+body.desktop .chapter-foot .primary{background:var(--accent);color:#fff}
+body.desktop .panel.sheet{
+  left:auto;right:0;top:var(--top-h);bottom:0;width:388px;max-height:none;
+  border-radius:0;transform:translateX(105%)}
+body.desktop .panel.sheet.open{transform:none}
+body.desktop .phone.reading .panel.sheet{top:52px}
+body.desktop .panel.drawer{
+  left:var(--side-w);top:var(--top-h);bottom:0;width:320px;max-height:none;
+  border-radius:0;transform:translateX(-105%);border-left:0;
+  border-right:1px solid var(--shell-line)}
+body.desktop .panel.drawer.open{transform:none}
+body.desktop .phone.reading .panel.drawer{left:var(--rail-w);top:52px}
+body.desktop .panel.sheet.left-panel{
+  left:var(--side-w);right:auto;top:var(--top-h);bottom:0;width:320px;
+  transform:translateX(-105%);border-left:0;border-right:1px solid var(--shell-line)}
+body.desktop .phone.reading .panel.sheet.left-panel{left:var(--rail-w);top:52px}
+body.desktop .panel.sheet.left-panel.open{transform:none}
+/* 侧栏止于底部进度条上沿，避免遮住目录 / 字体 / 听书等常驻按钮。 */
+body.desktop .phone.reading .panel.sheet:not(.chapter-sheet):not(#detailPanel),
+body.desktop .phone.reading .panel.drawer,
+body.desktop .phone.reading .panel.sheet.left-panel{bottom:var(--bottom-h)}
+body.desktop .panel.chapter-sheet,body.desktop #detailPanel{
+  left:50%;right:auto;top:50%;bottom:auto;width:min(920px,82vw);
+  height:min(740px,84vh);max-height:none;border-radius:14px;
+  border:1px solid var(--shell-line);box-shadow:0 24px 70px rgba(10,15,25,.30);
+  transform:translate(-50%,-46%) scale(.98);opacity:0}
+body.desktop .panel.chapter-sheet.open,body.desktop #detailPanel.open{
+  transform:translate(-50%,-50%) scale(1);opacity:1}
+body.desktop .chapter-body{background:var(--card)}
+body.desktop .chapter-body .para.chapter-title{color:var(--shell-fg)}
+body.desktop .detail-title,body.desktop .detail-intro{color:var(--shell-fg)}
+body.desktop .detail-badge{background:var(--shell)}
+body.desktop .da-main{background:var(--accent);color:#fff}
+body.desktop .da-sub{background:var(--shell);color:var(--shell-fg)}
+body.desktop .toast{bottom:26px}
+body.desktop .phone.reading .toast{bottom:calc(var(--bottom-h) + 18px)}
+body.desktop .para-menu{background:var(--card);color:var(--shell-fg);
+  border:1px solid var(--shell-line)}
+body.desktop .para-menu button:hover{background:var(--shell)}
+
+/* ---- 全屏播放器（桌面） ---- */
+body.desktop #playerView{background:var(--shell);color:var(--shell-fg)}
+body.desktop #playerView .pv-head{border-bottom:1px solid var(--shell-line);
+  max-width:760px;width:100%;margin:0 auto}
+body.desktop #playerView .pv-head button,body.desktop #playerView .pv-head span{color:var(--shell-fg)}
+body.desktop #playerView .pv-info h2,body.desktop #playerView .pv-info p{color:var(--shell-fg)}
+body.desktop #playerView .pv-bottom{background:var(--card);border-top:1px solid var(--shell-line);
+  max-width:760px;width:100%;margin:0 auto;border-radius:14px 14px 0 0}
+body.desktop #playerView .pv-controls button,body.desktop #playerView .progress-row{color:var(--shell-fg)}
+body.desktop #playerView .pv-lyric{max-width:760px;width:100%;margin:0 auto}
+body.desktop #playerView .lyric-line{color:var(--shell-fg)}
+body.desktop #playerView .lyric-line.on{color:var(--accent)}
+body.desktop .pv-cover{box-shadow:0 18px 44px rgba(20,25,35,.22),inset 0 0 0 10px rgba(255,255,255,.16)}
 </style>
 </head>
 <body>
 <div class="stage">
   <div class="phone on-shelf tab-on" id="phone" data-theme="paper">
+
+    <!-- 桌面布局：左侧分类导航（参考 Koodo Reader） -->
+    <aside class="app-side" id="appSide">
+      <div class="side-brand">
+        <span class="brand-mark">▤</span>
+        <div><b>ebook reader</b><small>本地书库 · 无需联网</small></div>
+      </div>
+      <div class="side-label">书库</div>
+      <button class="side-item active" data-nav="shelf"><span>📚</span>全部图书<i id="sideCount">0</i></button>
+      <button class="side-item" data-nav="store"><span>🔍</span>发现 / 书城</button>
+      <button class="side-item" data-nav="music"><span>🎵</span>音乐</button>
+      <button class="side-item" data-nav="profile"><span>👤</span>我的 / 统计</button>
+      <div class="side-label">阅读</div>
+      <button class="side-item" id="sideToc"><span>☰</span>目录 / 章节</button>
+      <button class="side-item" id="sideBookmarks"><span>🔖</span>书签 / 划线</button>
+      <button class="side-item" id="sideDirs"><span>📁</span>书库目录</button>
+      <div class="side-spacer"></div>
+      <div class="side-foot">
+        <button id="sideTheme">🌙 切换夜间模式</button>
+        <button id="sideSettings">⚙ 阅读设置</button>
+        <div>阅读进度、书签与偏好均保存在本机</div>
+      </div>
+    </aside>
+
+    <!-- 桌面布局：顶部工具栏 -->
+    <header class="app-topbar" id="appTopbar">
+      <button class="top-hamburger" id="btnCollapse" title="折叠 / 展开侧栏">☰</button>
+      <span class="top-title" id="topCrumb">全部图书</span>
+      <div class="top-search">
+        <span>🔍</span>
+        <input id="topSearch" placeholder="搜索书库 / 书城…" autocomplete="off">
+        <button id="btnTopSearch" title="搜索">↵</button>
+      </div>
+      <div class="top-spacer"></div>
+      <button class="top-btn" id="btnTopSort" title="切换排序">⇅ 最近阅读</button>
+      <button class="top-btn icon-only" id="btnTopRefresh" title="刷新书库">↻</button>
+      <button class="top-btn icon-only" id="btnTopTheme" title="日间 / 夜间">🌙</button>
+      <button class="top-btn" id="btnTopSettings" title="阅读设置">⚙ 设置</button>
+      <button class="top-btn primary" id="btnTopImport" title="添加书库目录">＋ 导入书籍</button>
+    </header>
 
     <div class="statusbar">
       <span id="clock">09:41</span>
@@ -567,9 +931,18 @@ input[type=range]{accent-color:var(--accent)}
       <div class="shelf-tools">
         <div class="search-box">
           <span>🔍</span>
-          <input id="shelfSearch" placeholder="搜索书架里的书" autocomplete="off">
+          <input id="shelfSearch" placeholder="筛选书架中的书" autocomplete="off">
         </div>
         <button class="go-btn" id="btnGoStore">书城 ›</button>
+        <!-- 桌面：排序 + 三种排列方式（卡片 / 列表 / 封面） -->
+        <div class="shelf-toolbar">
+          <button class="top-btn" id="btnShelfSort">⇅ 最近阅读</button>
+          <div class="view-switch" id="shelfViewSwitch">
+            <button data-view="grid" title="卡片视图">▦</button>
+            <button data-view="list" title="列表视图">☰</button>
+            <button data-view="cover" title="封面视图">▣</button>
+          </div>
+        </div>
       </div>
       <div class="shelf-scroll">
         <div id="continueWrap"></div>
@@ -625,6 +998,18 @@ input[type=range]{accent-color:var(--accent)}
 
     <!-- ============ 阅读页 ============ -->
     <section class="view" id="reader">
+      <!-- 桌面阅读页：左侧快捷工具栏（Koodo Reader 的悬浮侧栏） -->
+      <div class="reader-rail" id="readerRail">
+        <button data-act="toc" title="目录">☰</button>
+        <button data-act="bookmark" title="书签">🔖</button>
+        <button data-act="search" title="书内搜索">🔍</button>
+        <button data-act="tts" title="听书">🎧</button>
+        <button data-act="auto" title="自动阅读">▶</button>
+        <button data-act="font" title="阅读选项">Aa</button>
+        <div class="rail-spacer"></div>
+        <button data-act="night" title="日间 / 夜间">🌙</button>
+        <button data-act="full" title="全屏">⛶</button>
+      </div>
       <div class="scroller" id="scroller">
         <div id="content"></div>
         <div class="load-tip" id="loadTip"> </div>
@@ -643,6 +1028,7 @@ input[type=range]{accent-color:var(--accent)}
         <div class="tb-title" id="topTitle"> </div>
         <button class="icon-btn" id="btnSearch" title="书内搜索">🔍</button>
         <button class="icon-btn" id="btnStar" title="添加书签">☆</button>
+        <span class="tb-stat" id="topStat"></span>
       </header>
 
       <footer class="bottombar" id="bottombar">
@@ -745,6 +1131,7 @@ input[type=range]{accent-color:var(--accent)}
         <div class="pf-chips" id="viewChips">
           <button class="chip" data-view="grid">网格视图</button>
           <button class="chip" data-view="list">列表视图</button>
+          <button class="chip" data-view="cover">封面视图</button>
         </div>
         <div class="pf-card" id="hiddenCard"></div>
         <div class="sec-head"><span>⚙️ 设置</span></div>
@@ -833,6 +1220,8 @@ input[type=range]{accent-color:var(--accent)}
     <aside class="panel sheet" id="fontPanel">
       <div class="panel-head"><span>阅读设置</span><button class="close" data-close>×</button></div>
       <div class="panel-body">
+        <div class="set-row" id="layoutRow"><span class="lbl">阅读版式</span>
+          <div class="grow chips" id="layoutChips"></div></div>
         <div class="set-row"><span class="lbl">字号</span><div class="grow stepper">
           <button id="fontMinus">−</button><span class="val" id="fontVal">19</span><button id="fontPlus">+</button>
           <input type="range" id="fontRange" min="14" max="28" value="19" style="flex:1;margin-left:8px">
@@ -878,7 +1267,7 @@ input[type=range]{accent-color:var(--accent)}
       </div>
     </aside>
 
-    <aside class="panel sheet" id="bookmarkPanel">
+    <aside class="panel sheet left-panel" id="bookmarkPanel">
       <div class="panel-head"><span>书签</span><button class="close" data-close>×</button></div>
       <div class="inline-form" style="display:none"></div>
       <div class="panel-body" id="bookmarkList"></div>
@@ -890,7 +1279,7 @@ input[type=range]{accent-color:var(--accent)}
       <div class="panel-body" id="queueList"></div>
     </aside>
 
-    <aside class="panel sheet" id="searchPanel">
+    <aside class="panel sheet left-panel" id="searchPanel">
       <div class="panel-head"><span>书内搜索</span><button class="close" data-close>×</button></div>
       <div class="inline-form">
         <input id="searchInput" placeholder="输入关键词" autocomplete="off">
@@ -931,7 +1320,8 @@ const BATCH=60, MAX_NODES=420, TRIM=120;
 const defaults={fontSize:19,lineHeight:1.85,paraGap:12,theme:'paper',dim:0,
                 tapScroll:true,autoSpeed:1.6,fontFamily:'serif',pageTurn:'none',
                 ttsRate:1,ttsSleep:0,ttsAutoNext:true,sortMode:'recent',
-                shelfView:'grid',onlineSearch:false};
+                shelfView:'grid',onlineSearch:false,layout:'standard',
+                sideCollapsed:false};
 let set=Object.assign({},defaults,readJSON(LS_SET,{}));
 const S={view:'shelf',books:[],path:'',title:'',author:'',total:0,
          from:0,to:0,chapters:[],chapterSet:new Set(),bookmarks:[],
@@ -987,8 +1377,28 @@ let toastTimer=0;
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),1900);}
 function clockText(){return new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});}
-function updateClock(){const c=clockText();$('#clock').textContent=c;$('#footClock').textContent=c;}
+function updateClock(){
+  const c=clockText();$('#clock').textContent=c;$('#footClock').textContent=c;
+  const stat=$('#topStat');
+  if(stat)stat.textContent='今日阅读 '+fmtDuration((P.stats.days&&P.stats.days[dayKey()])||0);
+}
 function pct(line){return S.total>0?clamp(line/S.total*100,0,100):0;}
+function isDesktop(){return document.body.classList.contains('desktop');}
+// 宽度足够时用 Koodo 风格桌面布局，窗口变窄自动回退到手机版。
+function syncBottomBar(){
+  if(!isDesktop())return;
+  const h=$('#bottombar').getBoundingClientRect().height;
+  if(h>10)phone.style.setProperty('--bottom-h',Math.ceil(h)+'px');
+}
+function syncLayoutMode(){
+  const desk=window.innerWidth>=900;
+  document.body.classList.toggle('desktop',desk);
+  if(!desk)setMenu(false);
+  requestAnimationFrame(syncBottomBar);
+}
+function sortLabel(){
+  return {recent:'最近阅读',name:'书名',size:'文件大小'}[set.sortMode]||'最近阅读';
+}
 
 /* ---------------- 设置 ---------------- */
 function saveSet(){try{localStorage.setItem(LS_SET,JSON.stringify(set));}catch(e){}}
@@ -998,6 +1408,7 @@ const FONTS={serif:'"Songti SC","SimSun","Noto Serif CJK SC",Georgia,serif',
              hei:'"Heiti SC","SimHei","Microsoft YaHei",sans-serif'};
 function applySet(){
   phone.dataset.theme=set.theme;
+  document.body.dataset.theme=set.theme;
   const font=FONTS[set.fontFamily]||FONTS.serif;
   content.style.fontSize=set.fontSize+'px';
   content.style.lineHeight=String(set.lineHeight);
@@ -1026,6 +1437,17 @@ function applySet(){
   $$('#ttsSleepChips .chip').forEach(c=>c.classList.toggle('on',Number(c.dataset.v)===Number(T.sleepMin)));
   $$('#sortChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.sort===set.sortMode));
   $$('#viewChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.view===set.shelfView));
+  // 桌面布局：版式 / 侧栏 / 排列方式 / 工具栏状态
+  phone.dataset.layout=set.layout||'standard';
+  phone.classList.toggle('side-collapsed',!!set.sideCollapsed);
+  $$('#layoutChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.v===set.layout));
+  $$('#shelfViewSwitch button').forEach(b=>
+    b.classList.toggle('on',b.dataset.view===set.shelfView));
+  const sl=sortLabel();
+  $('#btnTopSort').textContent='⇅ '+sl;
+  $('#btnShelfSort').textContent='⇅ '+sl;
+  $('#sideTheme').textContent=set.theme==='night'?'☀ 切换日间模式':'🌙 切换夜间模式';
+  $('#btnTopTheme').textContent=set.theme==='night'?'☀':'🌙';
   const colors={paper:'#f5efe2',white:'#ffffff',green:'#e3eedd',night:'#1b1d21'};
   $$('#themeDots .theme-dot').forEach(d=>{
     d.classList.toggle('on',d.dataset.t===set.theme);
@@ -1033,6 +1455,8 @@ function applySet(){
   });
 }
 function buildChips(){
+  $('#layoutChips').innerHTML=[['narrow','窄栏'],['standard','标准'],['wide','宽栏']]
+    .map(x=>'<button class="chip" data-v="'+x[0]+'">'+x[1]+'</button>').join('');
   const lh=[['1.6','紧凑'],['1.85','标准'],['2.15','宽松']];
   $('#lineChips').innerHTML=lh.map(x=>'<button class="chip" data-v="'+x[0]+'">'+x[1]+'</button>').join('');
   const gp=[['6','紧凑'],['12','标准'],['20','宽松']];
@@ -1087,8 +1511,10 @@ function renderShelf(filter){
   $('#shelfSub').textContent='共 '+S.books.length+' 本书'+
     (P.hidden.length?' · '+P.hidden.length+' 本已隐藏':' · 本地书库');
   $('#gridTitle').textContent=(kw?'搜索结果 · ':'全部书籍 · ')+list.length+' 本';
+  $('#sideCount').textContent=S.books.length;
   const grid=$('#bookGrid');grid.innerHTML='';
   grid.classList.toggle('list-mode',set.shelfView==='list');
+  grid.classList.toggle('cover-mode',set.shelfView==='cover');
   list.forEach(b=>{
     const name=fileName(b.path);
     const item=el('div','book-item');
@@ -1247,10 +1673,17 @@ function activateView(id,showTab){
   phone.classList.toggle('tab-on',!!showTab);
   phone.classList.toggle('on-shelf',id==='shelf');
   phone.classList.toggle('warm-head',id==='shelf'||id==='store'||id==='profile');
+  phone.classList.toggle('reading',id==='reader'||id==='playerView');
+  const crumbs={shelf:'全部图书',store:'发现 / 书城',music:'音乐',
+                profile:'我的 / 统计',reader:'正在阅读',playerView:'正在播放'};
+  $('#topCrumb').textContent=crumbs[id]||'ebook reader';
   hideParaMenu();
+  requestAnimationFrame(syncBottomBar);
 }
 function setTab(name){
   $$('.tabbar button').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
+  $$('.app-side [data-nav]').forEach(x=>
+    x.classList.toggle('active',x.dataset.nav===name));
 }
 function showReader(){
   S.view='reader';closePanels();setMenu(false);
@@ -1421,7 +1854,8 @@ function visibleLine(){
   return S.to;
 }
 function bottomVisibleLine(){
-  const limit=scroller.getBoundingClientRect().bottom-24;
+  // 桌面下底部工具栏常驻，要从「工具栏上沿」判断可见的最后一行。
+  const limit=scroller.getBoundingClientRect().bottom-(isDesktop()?100:24);
   const nodes=content.children;
   let line=S.currentLine;
   for(let i=0;i<nodes.length;i++){
@@ -2553,6 +2987,73 @@ $('#pvRange').addEventListener('change',e=>{
   if(d>0)M.audio.currentTime=d*Number(e.target.value)/1000;
 });
 
+/* ---------------- 桌面布局交互 ---------------- */
+function desktopSearch(){
+  const q=$('#topSearch').value.trim();
+  showStore();
+  if(q){$('#storeInput').value=q;doStoreSearch();}
+}
+function cycleSort(){
+  const modes=['recent','name','size'];
+  set.sortMode=modes[(modes.indexOf(set.sortMode)+1)%modes.length];
+  saveSet();applySet();renderShelf($('#shelfSearch').value);
+  toast('排序：'+sortLabel());
+}
+function setShelfView(v){
+  set.shelfView=v;saveSet();applySet();renderShelf($('#shelfSearch').value);
+}
+function openFromSide(kind){
+  if(!S.path){toast('请先打开一本书');return;}
+  showReader();
+  if(kind==='toc')$('#btnToc').click();
+  else $('#btnBookmark').click();
+}
+function openDirs(){renderDirs();openPanel('dirPanel');}
+$$('.app-side [data-nav]').forEach(b=>b.addEventListener('click',()=>{
+  const n=b.dataset.nav;
+  if(n==='store')showStore();
+  else if(n==='music')showMusic();
+  else if(n==='profile')showProfile();
+  else showShelf();
+}));
+$$('.reader-rail [data-act]').forEach(b=>b.addEventListener('click',()=>{
+  const a=b.dataset.act;
+  if(a==='back'){backFromReader();return;}
+  if(a==='night'){$('#btnNight').click();return;}
+  if(a==='full'){
+    if(document.fullscreenElement)document.exitFullscreen();
+    else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();
+    return;
+  }
+  const map={toc:'#btnToc',bookmark:'#btnBookmark',search:'#btnSearch',
+             tts:'#btnTts',auto:'#btnAuto',font:'#btnFont'};
+  const t=$(map[a]);if(t)t.click();
+}));
+$('#btnCollapse').addEventListener('click',()=>{
+  set.sideCollapsed=!set.sideCollapsed;saveSet();applySet();
+});
+$('#btnTopSearch').addEventListener('click',desktopSearch);
+$('#topSearch').addEventListener('keydown',e=>{if(e.key==='Enter')desktopSearch();});
+$('#btnTopSort').addEventListener('click',cycleSort);
+$('#btnShelfSort').addEventListener('click',cycleSort);
+$('#btnTopRefresh').addEventListener('click',()=>{loadShelf();toast('已刷新书库');});
+$('#btnTopImport').addEventListener('click',openDirs);
+$('#sideDirs').addEventListener('click',openDirs);
+$('#sideToc').addEventListener('click',()=>openFromSide('toc'));
+$('#sideBookmarks').addEventListener('click',()=>openFromSide('bookmark'));
+$('#sideSettings').addEventListener('click',()=>openPanel('fontPanel'));
+$('#btnTopSettings').addEventListener('click',()=>openPanel('fontPanel'));
+$('#sideTheme').addEventListener('click',()=>$('#btnNight').click());
+$('#btnTopTheme').addEventListener('click',()=>$('#btnNight').click());
+$('#shelfViewSwitch').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(b)setShelfView(b.dataset.view);
+});
+$('#layoutChips').addEventListener('click',e=>{
+  const c=e.target.closest('.chip');if(!c)return;
+  set.layout=c.dataset.v;saveSet();applySet();
+  toast('阅读版式：'+c.textContent);
+});
+
 /* ---------------- 事件绑定 ---------------- */
 $('#mask').addEventListener('click',closePanels);
 $$('[data-close]').forEach(b=>b.addEventListener('click',closePanels));
@@ -2710,10 +3211,12 @@ scroller.addEventListener('pointerup',e=>{
   if(Math.abs(e.clientX-p.x)>8||Math.abs(e.clientY-p.y)>8)return;
   if(window.getSelection&&String(window.getSelection()).length>0)return;
   if(S.autoRead){toggleAuto(false);toast('自动阅读已暂停');return;}
+  if($('#mask').classList.contains('show')){closePanels();return;}
+  // 桌面工具栏常驻：正文点击只用于选段 / 关闭侧栏，不再承担翻屏与呼出菜单。
+  if(isDesktop())return;
   const r=scroller.getBoundingClientRect();
   const x=(e.clientX-r.left)/r.width;
   if(S.menu){setMenu(false);return;}
-  if($('#mask').classList.contains('show')){closePanels();return;}
   if(set.tapScroll&&x<0.3){turnPage(-1);return;}
   if(set.tapScroll&&x>0.7){turnPage(1);return;}
   setMenu(true);
@@ -2764,6 +3267,7 @@ document.addEventListener('keydown',e=>{
 });
 
 /* ---------------- 启动 ---------------- */
+syncLayoutMode();window.addEventListener('resize',syncLayoutMode);
 buildChips();applySet();updateClock();setInterval(updateClock,30000);
 loadShelf();renderStats();renderProfile();ttsVoices();loadCaps();
 setInterval(tickStats,1000);

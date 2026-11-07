@@ -81,7 +81,9 @@ bool launchChromium(const std::wstring& browser, const std::wstring& url) {
     std::wstring profile = profileDir();
     std::wstring cmd = L"\"" + browser + L"\"";
     cmd += L" --app=" + url;
-    cmd += L" --window-size=430,920";
+    // 桌面版式（Koodo 风格：侧边导航 + 顶部工具栏 + 中央阅读区）；
+    // 窗口宽度小于 900px 时页面会自动回退到手机版布局。
+    cmd += L" --window-size=1280,860";
     cmd += L" --no-first-run --no-default-browser-check --disable-extensions";
     if (!profile.empty()) cmd += L" --user-data-dir=\"" + profile + L"\"";
 
