@@ -97,7 +97,13 @@ engine with speed, voice, sleep timer and automatic next-chapter playback.
 The **Bookstore** tab searches the local library and (optionally) the Fanqie and
 so-novel sources: hot searches, search history, "continue reading" and
 recommendations, per-book details (intro, chapter count, word count, progress),
-"read now" and "add to shelf" (downloads into `downloads/`). The **Me** tab shows
+"read now" and "add to shelf" (downloads into `downloads/`). Fanqie details show
+the real cover, chapter / word count, readers and the first & latest chapter; the
+download sheet lets you pick **TXT / EPUB / PDF**, optionally generate an
+**audiobook** (MP3 / WAV) and restrict the **chapter range**, then follows the job
+with a per-chapter progress bar and a cancel button before copying the produced
+file into `downloads/`. The shelf's **Check updates** action scans downloaded
+books for new chapters and can refresh them in one click. The **Me** tab shows
 reading statistics (today / total / streak / per-book time), bookshelf sorting and
 grid-list switch, hidden-book restore, and shortcuts to reader / library / TTS
 settings. Chapter detection now rejects body sentences such as "第二章第1段，……".
@@ -153,6 +159,17 @@ testing; the server is single-threaded and binds to loopback by default.
 | GET/POST | `/api/book/bookmarks?path=` | list / add / remove bookmarks |
 | GET | `/api/fanqie/search?q=` | Fanqie search |
 | POST | `/api/fanqie/download` | download a Fanqie book |
+| GET | `/api/fanqie/status` | downloader version, save dir, current format / audiobook config |
+| GET/POST | `/api/fanqie/config` | read / update output format (`txt`/`epub`/`pdf`), audiobook, bulk files |
+| GET | `/api/fanqie/preview?bookId=` | cover, chapter count, word count, readers, first / last chapter |
+| GET | `/api/fanqie/cover?bookId=` | JPEG cover proxy (cached 1 day) |
+| POST | `/api/fanqie/job` | start an async download (`format`, `audiobook`, `audiobookFormat`, `rangeStart` / `rangeEnd`) |
+| GET | `/api/fanqie/job?id=` | job snapshot: state, saved / total chapters, phase, pending choices |
+| POST | `/api/fanqie/job/action?action=` | `cancel` a job, or answer its `format` / `bookname` prompt |
+| POST | `/api/fanqie/import` | copy the produced file from the downloader into `downloads/` |
+| GET | `/api/fanqie/updates[?start=1]` | scan downloaded books for new chapters |
+| GET | `/api/fanqie/history?limit=` | download history recorded by the downloader |
+| GET | `/api/fanqie/library[?path=&name=]` | browse the downloader save directory |
 | GET | `/api/sonovel/search?q=` | so-novel aggregated search |
 | POST | `/api/sonovel/download` | download via so-novel |
 | GET | `/api/music/library[?dir=]` | local music library (available in GUI-only builds too) |

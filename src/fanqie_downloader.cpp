@@ -601,6 +601,420 @@ int FanqieDownloader::updateBook(const std::string& bookId, const std::string& b
     return added;
 }
 
+// ==================== 服务端能力（下载器 2.4.x） ====================
+
+namespace {
+
+std::string pctEncode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0x0F];
+        }
+    }
+    return out;
+}
+
+// 按 / 分段编码，保留层级
+std::string encodeRelPath(const std::string& rel) {
+    std::string out;
+    std::string seg;
+    for (char c : rel) {
+        if (c == '/' || c == '\\') {
+            out += pctEncode(seg);
+            out += '/';
+            seg.clear();
+        } else {
+            seg += c;
+        }
+    }
+    out += pctEncode(seg);
+    return out;
+}
+
+void collectChoices(const minijson::Value& v, std::vector<std::string>& out) {
+    for (size_t i = 0; i < v.size(); i++) {
+        const minijson::Value& e = v[i];
+        std::string s;
+        if (e.type == minijson::Value::Object) {
+            const char* keys[] = {"value", "format", "name", "label", "title"};
+            for (const char* k : keys) {
+                s = e[k].toStringValue();
+                if (!s.empty()) break;
+            }
+        } else {
+            s = e.toStringValue();
+        }
+        if (!s.empty()) out.push_back(s);
+    }
+}
+
+} // namespace
+
+FanqieDownloader::ServerStatus FanqieDownloader::status() {
+    ServerStatus st;
+    if (!ensureService()) return st;
+
+    std::string body = httpGet("/api/status", "");
+    if (body.empty()) return st;
+
+    minijson::Value r = minijson::parse(body);
+    if (r.type != minijson::Value::Object) return st;
+
+    st.ok = true;
+    st.version = r["version"].toStringValue();
+    st.saveDir = r["save_dir"].toStringValue();
+    st.bindAddr = r["bind_addr"].toStringValue();
+    st.locked = r["locked"].asBool();
+    st.docker = r["docker_build"].asBool();
+    return st;
+}
+
+FanqieDownloader::WebConfig FanqieDownloader::webConfig() {
+    WebConfig c;
+    if (!ensureService()) return c;
+
+    std::string body = httpGet("/api/config", "");
+    if (body.empty()) return c;
+
+    minijson::Value r = minijson::parse(body);
+    if (r.type != minijson::Value::Object) return c;
+
+    c.valid = true;
+    c.novelFormat = r["novel_format"].toStringValue();
+    if (c.novelFormat.empty()) c.novelFormat = "txt";
+    c.bulkFiles = r["bulk_files"].asBool();
+    c.enableAudiobook = r["enable_audiobook"].asBool();
+    c.audiobookFormat = r["audiobook_format"].toStringValue();
+    if (c.audiobookFormat.empty()) c.audiobookFormat = "mp3";
+    c.askFormat = r["ask_format_after_download"].asBool();
+    return c;
+}
+
+bool FanqieDownloader::applyConfig(const WebConfig& cfg, std::string& err) {
+    err.clear();
+    if (!ensureService()) { err = "下载器服务不可用"; return false; }
+
+    std::ostringstream body;
+    body << "{";
+    if (!cfg.novelFormat.empty()) body << "\"novel_format\":\"" << cfg.novelFormat << "\"";
+    body << ",\"bulk_files\":" << (cfg.bulkFiles ? "true" : "false");
+    body << ",\"enable_audiobook\":" << (cfg.enableAudiobook ? "true" : "false");
+    if (!cfg.audiobookFormat.empty()) body << ",\"audiobook_format\":\"" << cfg.audiobookFormat << "\"";
+    body << "}";
+
+    std::string resp = httpPostJson("/api/config", body.str());
+    if (resp.empty()) { err = "服务未接受配置（可能版本不支持）"; return false; }
+    if (resp.find("\"error\"") != std::string::npos) {
+        minijson::Value r = minijson::parse(resp);
+        err = r["error"].toStringValue();
+        if (err.empty()) err = resp.substr(0, 120);
+        return false;
+    }
+    return true;
+}
+
+FanqieDownloader::PreviewInfo FanqieDownloader::preview(const std::string& bookId) {
+    PreviewInfo p;
+    if (bookId.empty() || !ensureService()) return p;
+
+    std::string body = httpGet("/api/preview/" + urlEncode(bookId), "");
+    if (body.empty()) return p;
+
+    minijson::Value r = minijson::parse(body);
+    if (r.type != minijson::Value::Object) return p;
+
+    p.bookId = r["book_id"].toStringValue();
+    if (p.bookId.empty()) p.bookId = bookId;
+    p.name = r["book_name"].toStringValue();
+    p.originalName = r["original_book_name"].toStringValue();
+    p.author = r["author"].toStringValue();
+    p.category = r["category"].toStringValue();
+    p.description = r["description"].toStringValue();
+    p.tags = r["tags"].toStringValue();
+    p.score = r["score"].toStringValue();
+    p.readCountText = r["read_count_text"].toStringValue();
+    p.firstChapter = r["first_chapter_title"].toStringValue();
+    p.lastChapter = r["last_chapter_title"].toStringValue();
+    p.coverUrl = r["cover_url"].toStringValue();
+    p.chapterCount = (int)r["chapter_count"].asNumber();
+    p.wordCount = (long long)r["word_count"].asNumber();
+    p.finished = r["finished"].asBool();
+    p.valid = !p.name.empty() || !p.bookId.empty();
+    return p;
+}
+
+int FanqieDownloader::startJob(const std::string& bookId, const DownloadOptions& opt,
+                               std::string& err) {
+    err.clear();
+    if (bookId.empty()) { err = "缺少 bookId"; return 0; }
+    if (!ensureService()) { err = "下载器服务不可用"; return 0; }
+
+    // 需要换格式 / 开关有声书时，先写服务端配置（任务会按配置产出文件）
+    if (!opt.format.empty() || opt.audiobookMode >= 0 || !opt.audiobookFormat.empty()) {
+        WebConfig cfg = webConfig();
+        if (cfg.valid) {
+            bool dirty = false;
+            if (!opt.format.empty() && cfg.novelFormat != opt.format) {
+                cfg.novelFormat = opt.format;
+                dirty = true;
+            }
+            if (opt.audiobookMode >= 0) {
+                bool want = opt.audiobookMode == 1;
+                if (cfg.enableAudiobook != want) { cfg.enableAudiobook = want; dirty = true; }
+            }
+            if (!opt.audiobookFormat.empty() && cfg.audiobookFormat != opt.audiobookFormat) {
+                cfg.audiobookFormat = opt.audiobookFormat;
+                dirty = true;
+            }
+            if (dirty) {
+                std::string e;
+                if (!applyConfig(cfg, e)) { err = e; return 0; }
+            }
+        }
+    }
+
+    std::ostringstream body;
+    body << "{\"book_id\":\"" << bookId << "\"";
+    if (opt.rangeStart > 0 && opt.rangeEnd >= opt.rangeStart) {
+        body << ",\"range_start\":" << opt.rangeStart
+             << ",\"range_end\":" << opt.rangeEnd;
+    }
+    body << "}";
+
+    std::string resp = httpPostJson("/api/jobs", body.str());
+    if (resp.empty()) { err = "创建任务失败（服务未响应）"; return 0; }
+
+    minijson::Value r = minijson::parse(resp);
+    int id = (int)r["id"].asNumber();
+    if (id <= 0) {
+        err = r["message"].toStringValue();
+        if (err.empty()) err = "创建任务失败";
+        return 0;
+    }
+    return id;
+}
+
+FanqieDownloader::JobInfo FanqieDownloader::job(int id) {
+    JobInfo j;
+    if (id <= 0 || !ensureService()) return j;
+
+    std::string s = httpGet("/api/jobs", "id=" + std::to_string(id));
+    if (s.empty()) return j;
+
+    minijson::Value r = minijson::parse(s);
+    const minijson::Value& items = r["items"];
+    if (items.size() == 0) return j;
+
+    const minijson::Value& it = items[0];
+    j.valid = true;
+    j.id = (int)it["id"].asNumber();
+    j.bookId = it["book_id"].toStringValue();
+    j.title = it["title"].toStringValue();
+    j.author = it["author"].toStringValue();
+    j.state = it["state"].toStringValue();
+    j.message = it["message"].toStringValue();
+
+    const minijson::Value& prog = it["progress"];
+    j.savedChapters = (int)prog["saved_chapters"].asNumber();
+    j.totalChapters = (int)prog["chapter_total"].asNumber();
+    j.savePhase = prog["save_phase"].toStringValue();
+
+    collectChoices(it["format_options"], j.formatOptions);
+    collectChoices(it["book_name_options"], j.bookNameOptions);
+    return j;
+}
+
+bool FanqieDownloader::cancelJob(int id) {
+    if (id <= 0 || !ensureService()) return false;
+    std::string r = httpPostJson("/api/jobs/" + std::to_string(id) + "/cancel", "{}");
+    return !r.empty();
+}
+
+bool FanqieDownloader::chooseFormat(int id, const std::string& format) {
+    if (id <= 0 || format.empty() || !ensureService()) return false;
+    std::string r = httpPostJson("/api/jobs/" + std::to_string(id) + "/format",
+                                 "{\"value\":\"" + format + "\"}");
+    return !r.empty();
+}
+
+bool FanqieDownloader::chooseBookName(int id, const std::string& name) {
+    if (id <= 0 || !ensureService()) return false;
+    std::string body = name.empty() ? std::string("{\"value\":null}")
+                                    : "{\"value\":\"" + name + "\"}";
+    std::string r = httpPostJson("/api/jobs/" + std::to_string(id) + "/book_name", body);
+    return !r.empty();
+}
+
+std::vector<FanqieDownloader::LibraryEntry> FanqieDownloader::library(
+    const std::string& path, const std::string& name, bool startScan) {
+    std::vector<LibraryEntry> out;
+    if (!ensureService()) return out;
+
+    std::string q = std::string("start=") + (startScan ? "true" : "false");
+    if (!path.empty()) q += "&path=" + urlEncode(path);
+    if (!name.empty()) q += "&name=" + urlEncode(name);
+
+    std::string s = httpGet("/api/library", q);
+    if (s.empty()) return out;
+
+    minijson::Value r = minijson::parse(s);
+    const minijson::Value& items = r["items"];
+    for (size_t i = 0; i < items.size(); i++) {
+        const minijson::Value& it = items[i];
+        LibraryEntry e;
+        e.kind = it["kind"].toStringValue();
+        e.name = it["name"].toStringValue();
+        e.relPath = it["rel_path"].toStringValue();
+        e.ext = it["ext"].toStringValue();
+        e.size = (long long)it["size"].asNumber();
+        if (e.name.empty()) continue;
+        out.push_back(e);
+    }
+    return out;
+}
+
+bool FanqieDownloader::fetchServerFile(const std::string& relPath, std::string& bytes) {
+    bytes.clear();
+    if (relPath.empty() || !ensureService()) return false;
+
+    HttpClient client;
+    client.setTimeout(180);
+    bytes = client.get(baseUrl + "/download/" + encodeRelPath(relPath));
+    return !bytes.empty();
+}
+
+bool FanqieDownloader::fetchCover(const std::string& bookId, std::string& bytes) {
+    bytes.clear();
+    if (bookId.empty() || !ensureService()) return false;
+
+    HttpClient client;
+    client.setTimeout(30);
+    bytes = client.get(baseUrl + "/api/preview-cover-by-book/" + urlEncode(bookId));
+    return !bytes.empty();
+}
+
+std::string FanqieDownloader::importProduced(const std::string& bookId,
+                                             const std::string& bookName,
+                                             const std::string& format,
+                                             const std::string& localDir,
+                                             std::string& err, int waitSeconds) {
+    err.clear();
+    std::string fmt = format.empty() ? "txt" : format;
+    std::string outDir = localDir;
+    fsutil::createDirs(outDir);
+
+    auto save = [&](const std::string& relPath, const std::string& stem) -> std::string {
+        std::string bytes;
+        if (!fetchServerFile(relPath, bytes) || bytes.empty()) return "";
+        std::string outPath = fsutil::join(outDir, sanitizeName(stem) + "." + fmt);
+        if (!fsutil::writeAllAtomic(outPath, bytes)) { err = "写入本地文件失败"; return ""; }
+        return outPath;
+    };
+
+    // 合并单文件模式下文件名是确定的（保存目录/书名.格式），直接按名取，避免整库扫描。
+    std::vector<std::string> stems;
+    if (!bookName.empty()) {
+        stems.push_back(sanitizeName(bookName));
+        if (sanitizeName(bookName) != bookName) stems.push_back(bookName);
+    }
+
+    // 书名可能被服务端清洗成别的形式，取一次预览补上原始书名
+    auto addPreviewNames = [&]() {
+        if (bookId.empty()) return;
+        PreviewInfo p = preview(bookId);
+        if (!p.valid) return;
+        for (const std::string& n : {p.name, p.originalName}) {
+            if (n.empty()) continue;
+            std::string s = sanitizeName(n);
+            if (std::find(stems.begin(), stems.end(), s) == stems.end()) stems.push_back(s);
+            if (std::find(stems.begin(), stems.end(), n) == stems.end()) stems.push_back(n);
+        }
+    };
+
+    for (int i = 0; i <= waitSeconds; i++) {
+        for (const auto& s : stems) {
+            std::string p = save(s + "." + fmt, s);
+            if (!p.empty()) return p;
+        }
+        if (i == 2) addPreviewNames();
+
+        // 兜底：列服务端书库按书名过滤（大目录扫描较慢，放在后面）
+        if (i >= 2 && !bookName.empty()) {
+            auto items = library("", bookName, /*startScan=*/i == 2);
+            for (const auto& it : items) {
+                if (it.kind != "file" || it.ext != fmt) continue;
+                std::string p = save(it.relPath, fsutil::stem(it.name));
+                if (!p.empty()) return p;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    err = "服务端没有找到导出的 " + fmt + " 文件（可能仍在校验或书源失败）";
+    return "";
+}
+
+std::vector<FanqieDownloader::UpdateEntry> FanqieDownloader::updates(bool startScan,
+                                                                    bool& running) {
+    std::vector<UpdateEntry> out;
+    running = false;
+    if (!ensureService()) return out;
+
+    std::string s = httpGet("/api/updates", startScan ? "start=true" : "start=false");
+    if (s.empty()) return out;
+
+    minijson::Value r = minijson::parse(s);
+    running = r["running"].asBool();
+    const minijson::Value& items = r["updates"];
+    for (size_t i = 0; i < items.size(); i++) {
+        const minijson::Value& it = items[i];
+        UpdateEntry e;
+        e.bookId = it["book_id"].toStringValue();
+        e.bookName = it["book_name"].toStringValue();
+        e.folder = it["folder"].toStringValue();
+        e.localTotal = (int)it["local_total"].asNumber();
+        e.remoteTotal = (int)it["remote_total"].asNumber();
+        e.newCount = (int)it["new_count"].asNumber();
+        e.hasUpdate = it["has_update"].asBool();
+        if (e.bookName.empty()) continue;
+        out.push_back(e);
+    }
+    return out;
+}
+
+std::vector<FanqieDownloader::HistoryEntry> FanqieDownloader::history(int limit) {
+    std::vector<HistoryEntry> out;
+    if (!ensureService()) return out;
+
+    std::string s = httpGet("/api/history", "limit=" + std::to_string(limit));
+    if (s.empty()) return out;
+
+    minijson::Value r = minijson::parse(s);
+    const minijson::Value& items = r["items"];
+    for (size_t i = 0; i < items.size(); i++) {
+        const minijson::Value& it = items[i];
+        HistoryEntry e;
+        e.timestamp = it["timestamp"].toStringValue();
+        e.bookId = it["book_id"].toStringValue();
+        e.bookName = it["book_name"].toStringValue();
+        e.author = it["author"].toStringValue();
+        e.status = it["status"].toStringValue();
+        e.progressText = it["progress"].toStringValue();
+        e.selectedChapters = (int)it["selected_chapters"].asNumber();
+        e.successChapters = (int)it["success_chapters"].asNumber();
+        e.failedChapters = (int)it["failed_chapters"].asNumber();
+        if (e.bookName.empty()) continue;
+        out.push_back(e);
+    }
+    return out;
+}
+
 // ==================== 下载器自更新 ====================
 
 bool FanqieDownloader::selfUpdate(bool autoConfirm, std::string& output) {

@@ -186,6 +186,9 @@ Response handleHealth(const Request&) {
     caps.push_back("library-detail");
 #ifdef HAS_CURL
     caps.push_back("fanqie");
+    caps.push_back("fanqie-jobs");
+    caps.push_back("fanqie-updates");
+    caps.push_back("fanqie-cover");
     caps.push_back("sonovel");
     caps.push_back("online-books");
 #endif
@@ -901,6 +904,321 @@ Response handleFanqieDownload(const Request& req) {
     return okJson(j);
 }
 
+// ---------- 番茄下载器 2.4.x 能力 ----------
+
+// 服务状态 + 当前下载配置
+Response handleFanqieStatus(const Request&) {
+    FanqieDownloader dl(2);
+    FanqieDownloader::ServerStatus st = dl.status();
+    if (!st.ok) return Response::error("番茄下载器服务不可用", 503);
+
+    FanqieDownloader::WebConfig cfg = dl.webConfig();
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("version").value(st.version);
+    j.key("saveDir").value(st.saveDir);
+    j.key("locked").value(st.locked);
+    j.key("docker").value(st.docker);
+    j.key("format").value(cfg.novelFormat);
+    j.key("audiobook").value(cfg.enableAudiobook);
+    j.key("audiobookFormat").value(cfg.audiobookFormat);
+    j.key("bulkFiles").value(cfg.bulkFiles);
+    j.key("askFormat").value(cfg.askFormat);
+    j.endObject();
+    return okJson(j);
+}
+
+// 写入下载配置（格式 / 有声书 / 分章）
+Response handleFanqieConfigSet(const Request& req) {
+    FanqieDownloader dl(2);
+    FanqieDownloader::WebConfig cfg = dl.webConfig();
+    if (!cfg.valid) return Response::error("番茄下载器服务不可用", 503);
+
+    minijson::Value b = minijson::parse(req.body);
+    std::string fmt = b["format"].toStringValue();
+    if (!fmt.empty()) cfg.novelFormat = fmt;
+    std::string abf = b["audiobookFormat"].toStringValue();
+    if (!abf.empty()) cfg.audiobookFormat = abf;
+    if (b.has("audiobook")) cfg.enableAudiobook = b["audiobook"].asBool();
+    if (b.has("bulkFiles")) cfg.bulkFiles = b["bulkFiles"].asBool();
+
+    std::string err;
+    if (!dl.applyConfig(cfg, err)) {
+        return Response::error(err.empty() ? "配置写入失败" : err, 502);
+    }
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("format").value(cfg.novelFormat);
+    j.key("audiobook").value(cfg.enableAudiobook);
+    j.key("audiobookFormat").value(cfg.audiobookFormat);
+    j.key("bulkFiles").value(cfg.bulkFiles);
+    j.endObject();
+    return okJson(j);
+}
+
+// 书籍预览：封面 / 章数 / 字数 / 在读 / 最新章
+Response handleFanqiePreview(const Request& req) {
+    std::string bookId = queryStr(req, "bookId");
+    if (bookId.empty()) return badRequest("缺少参数 bookId");
+
+    FanqieDownloader dl(2);
+    FanqieDownloader::PreviewInfo p = dl.preview(bookId);
+    if (!p.valid) return Response::error("获取书籍信息失败（书源可能超时）", 502);
+
+    Json j;
+    j.beginObject();
+    j.key("bookId").value(p.bookId);
+    j.key("name").value(p.name);
+    j.key("author").value(p.author);
+    j.key("category").value(p.category);
+    j.key("abstract").value(p.description);
+    j.key("tags").value(p.tags);
+    j.key("score").value(p.score);
+    j.key("readCount").value(p.readCountText);
+    j.key("firstChapter").value(p.firstChapter);
+    j.key("lastChapter").value(p.lastChapter);
+    j.key("chapters").value(p.chapterCount);
+    j.key("words").value(p.wordCount);
+    j.key("finished").value(p.finished);
+    j.key("cover").value("/api/fanqie/cover?bookId=" + api::urlEncode(bookId));
+    j.endObject();
+    return okJson(j);
+}
+
+// 封面代理（JPEG 字节流）
+Response handleFanqieCover(const Request& req) {
+    std::string bookId = queryStr(req, "bookId");
+    if (bookId.empty()) return badRequest("缺少参数 bookId");
+
+    FanqieDownloader dl(2);
+    std::string bytes;
+    if (!dl.fetchCover(bookId, bytes) || bytes.empty()) {
+        return Response::error("封面不可用", 404);
+    }
+
+    Response r;
+    r.status = 200;
+    r.contentType = "image/jpeg";
+    r.body = bytes;
+    r.headers["Cache-Control"] = "public, max-age=86400";
+    return r;
+}
+
+// 创建下载任务（异步，前端轮询 /api/fanqie/job）
+Response handleFanqieJobStart(const Request& req) {
+    minijson::Value b = minijson::parse(req.body);
+    std::string bookId = b["bookId"].toStringValue();
+    if (bookId.empty()) bookId = b["book_id"].toStringValue();
+    if (bookId.empty()) bookId = queryStr(req, "bookId");
+    if (bookId.empty()) return badRequest("缺少参数 bookId");
+
+    FanqieDownloader::DownloadOptions opt;
+    opt.format = b["format"].toStringValue();
+    if (b.has("audiobook")) opt.audiobookMode = b["audiobook"].asBool() ? 1 : 0;
+    opt.audiobookFormat = b["audiobookFormat"].toStringValue();
+    opt.rangeStart = (int)b["rangeStart"].asNumber();
+    opt.rangeEnd = (int)b["rangeEnd"].asNumber();
+
+    FanqieDownloader dl(2);
+    std::string err;
+    int id = dl.startJob(bookId, opt, err);
+    if (id <= 0) return Response::error(err.empty() ? "创建任务失败" : err, 502);
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("jobId").value(id);
+    j.key("bookId").value(bookId);
+    j.endObject();
+    return okJson(j);
+}
+
+// 任务快照
+Response handleFanqieJob(const Request& req) {
+    int id = queryInt(req, "id", 0);
+    if (id <= 0) return badRequest("缺少参数 id");
+
+    FanqieDownloader dl(2);
+    FanqieDownloader::JobInfo ji = dl.job(id);
+    if (!ji.valid) return notFound("任务不存在");
+
+    Json j;
+    j.beginObject();
+    j.key("id").value(ji.id);
+    j.key("bookId").value(ji.bookId);
+    j.key("title").value(ji.title);
+    j.key("author").value(ji.author);
+    j.key("state").value(ji.state);
+    j.key("message").value(ji.message);
+    j.key("saved").value(ji.savedChapters);
+    j.key("total").value(ji.totalChapters);
+    j.key("phase").value(ji.savePhase);
+    j.key("done").value(ji.finished());
+    j.key("formatOptions");
+    j.beginArray();
+    for (const auto& s : ji.formatOptions) j.value(s);
+    j.endArray();
+    j.key("bookNameOptions");
+    j.beginArray();
+    for (const auto& s : ji.bookNameOptions) j.value(s);
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+// 任务操作：action=cancel / format / bookname
+Response handleFanqieJobAction(const Request& req) {
+    minijson::Value b = minijson::parse(req.body);
+    int id = (int)b["id"].asNumber();
+    if (id <= 0) id = queryInt(req, "id", 0);
+    if (id <= 0) return badRequest("缺少参数 id");
+
+    // action 既可以放在查询串，也可以放在请求体里
+    std::string action = queryStr(req, "action");
+    if (action.empty()) action = b["action"].toStringValue();
+    std::string value = b["value"].toStringValue();
+    if (value.empty()) value = queryStr(req, "value");
+
+    FanqieDownloader dl(2);
+    bool ok = false;
+    if (action == "cancel") ok = dl.cancelJob(id);
+    else if (action == "format") ok = dl.chooseFormat(id, value);
+    else if (action == "bookname") ok = dl.chooseBookName(id, value);
+    else return badRequest("未知操作: " + action);
+
+    if (!ok) return Response::error("操作失败或任务已结束", 502);
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.endObject();
+    return okJson(j);
+}
+
+// 服务端书库（含 epub / 有声书目录）
+Response handleFanqieLibrary(const Request& req) {
+    std::string path = queryStr(req, "path");
+    std::string name = queryStr(req, "name");
+    bool startScan = queryStr(req, "start", "1") != "0";
+
+    FanqieDownloader dl(2);
+    auto items = dl.library(path, name, startScan);
+
+    Json j;
+    j.beginObject();
+    j.key("path").value(path);
+    j.key("count").value((int)items.size());
+    j.key("items");
+    j.beginArray();
+    for (const auto& e : items) {
+        j.beginObject();
+        j.key("kind").value(e.kind);
+        j.key("name").value(e.name);
+        j.key("path").value(e.relPath);
+        j.key("ext").value(e.ext);
+        j.key("size").value((long long)e.size);
+        j.endObject();
+    }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+// 任务完成后把产出文件取回本地 downloads/
+Response handleFanqieImport(const Request& req) {
+    minijson::Value b = minijson::parse(req.body);
+    std::string bookId = b["bookId"].toStringValue();
+    std::string name = b["name"].toStringValue();
+    std::string format = b["format"].toStringValue();
+    if (format.empty()) format = "txt";
+    if (name.empty() && bookId.empty()) return badRequest("缺少参数 name / bookId");
+
+    std::string dir = downloadDir();
+    if (dir.empty()) return Response::error("无法确定下载目录", 500);
+
+    FanqieDownloader dl(2);
+    std::string err;
+    std::string path = dl.importProduced(bookId, name, format, dir, err);
+    if (path.empty()) {
+        return Response::error(err.empty() ? "取回文件失败" : err, 502);
+    }
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("path").value(path);
+    j.key("format").value(format);
+    j.endObject();
+    return okJson(j);
+}
+
+// 追更扫描（start=1 触发新扫描，start=0 只读结果）
+Response handleFanqieUpdates(const Request& req) {
+    // 默认首次进入时触发扫描；轮询传 start=false（也兼容 0）只读状态
+    std::string startRaw = queryStr(req, "start", "true");
+    bool startScan = !(startRaw == "false" || startRaw == "0");
+
+    FanqieDownloader dl(2);
+    bool running = false;
+    auto list = dl.updates(startScan, running);
+
+    Json j;
+    j.beginObject();
+    j.key("running").value(running);
+    j.key("count").value((int)list.size());
+    j.key("updates");
+    j.beginArray();
+    for (const auto& e : list) {
+        j.beginObject();
+        j.key("bookId").value(e.bookId);
+        j.key("name").value(e.bookName);
+        j.key("folder").value(e.folder);
+        j.key("local").value(e.localTotal);
+        j.key("remote").value(e.remoteTotal);
+        j.key("newCount").value(e.newCount);
+        j.key("hasUpdate").value(e.hasUpdate);
+        j.endObject();
+    }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
+// 下载历史
+Response handleFanqieHistory(const Request& req) {
+    int limit = queryInt(req, "limit", 30);
+    if (limit <= 0) limit = 30;
+
+    FanqieDownloader dl(2);
+    auto list = dl.history(limit);
+
+    Json j;
+    j.beginObject();
+    j.key("count").value((int)list.size());
+    j.key("items");
+    j.beginArray();
+    for (const auto& e : list) {
+        j.beginObject();
+        j.key("time").value(e.timestamp);
+        j.key("bookId").value(e.bookId);
+        j.key("name").value(e.bookName);
+        j.key("author").value(e.author);
+        j.key("status").value(e.status);
+        j.key("progress").value(e.progressText);
+        j.key("selected").value(e.selectedChapters);
+        j.key("success").value(e.successChapters);
+        j.key("failed").value(e.failedChapters);
+        j.endObject();
+    }
+    j.endArray();
+    j.endObject();
+    return okJson(j);
+}
+
 Response handleSoNovelSearch(const Request& req) {
     std::string q = queryStr(req, "q");
     if (q.empty()) return badRequest("缺少参数 q");
@@ -1588,6 +1906,17 @@ void registerRoutes(Server& server) {
     // 番茄
     server.route("GET", "/api/fanqie/search", handleFanqieSearch);
     server.route("POST", "/api/fanqie/download", handleFanqieDownload);
+    server.route("GET", "/api/fanqie/status", handleFanqieStatus);
+    server.route("POST", "/api/fanqie/config", handleFanqieConfigSet);
+    server.route("GET", "/api/fanqie/preview", handleFanqiePreview);
+    server.route("GET", "/api/fanqie/cover", handleFanqieCover);
+    server.route("POST", "/api/fanqie/job", handleFanqieJobStart);
+    server.route("GET", "/api/fanqie/job", handleFanqieJob);
+    server.route("POST", "/api/fanqie/job/action", handleFanqieJobAction);
+    server.route("GET", "/api/fanqie/library", handleFanqieLibrary);
+    server.route("POST", "/api/fanqie/import", handleFanqieImport);
+    server.route("GET", "/api/fanqie/updates", handleFanqieUpdates);
+    server.route("GET", "/api/fanqie/history", handleFanqieHistory);
 
     // so-novel
     server.route("GET", "/api/sonovel/search", handleSoNovelSearch);
