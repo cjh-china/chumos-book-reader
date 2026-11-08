@@ -202,9 +202,12 @@ public:
     bool chooseBookName(int id, const std::string& name);
 
     // 浏览服务端书库（相对保存目录）。startScan=false 时只读缓存，适合轮询。
+    // running / scanned 非空时回填服务端扫描状态。
     std::vector<LibraryEntry> library(const std::string& path = "",
                                       const std::string& name = "",
-                                      bool startScan = true);
+                                      bool startScan = true,
+                                      bool* running = nullptr,
+                                      int* scanned = nullptr);
 
     // 下载服务端文件到内存（/download/<relPath>）
     bool fetchServerFile(const std::string& relPath, std::string& bytes);

@@ -852,8 +852,11 @@ bool FanqieDownloader::chooseBookName(int id, const std::string& name) {
 }
 
 std::vector<FanqieDownloader::LibraryEntry> FanqieDownloader::library(
-    const std::string& path, const std::string& name, bool startScan) {
+    const std::string& path, const std::string& name, bool startScan,
+    bool* running, int* scanned) {
     std::vector<LibraryEntry> out;
+    if (running) *running = false;
+    if (scanned) *scanned = 0;
     if (!ensureService()) return out;
 
     std::string q = std::string("start=") + (startScan ? "true" : "false");
@@ -864,6 +867,8 @@ std::vector<FanqieDownloader::LibraryEntry> FanqieDownloader::library(
     if (s.empty()) return out;
 
     minijson::Value r = minijson::parse(s);
+    if (running) *running = r["running"].asBool();
+    if (scanned) *scanned = (int)r["scanned"].asNumber();
     const minijson::Value& items = r["items"];
     for (size_t i = 0; i < items.size(); i++) {
         const minijson::Value& it = items[i];
@@ -956,7 +961,10 @@ std::string FanqieDownloader::importProduced(const std::string& bookId,
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    err = "服务端没有找到导出的 " + fmt + " 文件（可能仍在校验或书源失败）";
+    if (fmt == "pdf")
+        err = "上游不允许通过 HTTP 取回 PDF，文件只保留在下载器保存目录";
+    else
+        err = "服务端没有找到导出的 " + fmt + " 文件（可能仍在校验或书源失败）";
     return "";
 }
 

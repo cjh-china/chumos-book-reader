@@ -930,6 +930,24 @@ Response handleFanqieStatus(const Request&) {
     return okJson(j);
 }
 
+// 读取当前下载器配置（与 POST 同一端点，便于调试与前端回显）
+Response handleFanqieConfigGet(const Request&) {
+    FanqieDownloader dl(2);
+    FanqieDownloader::WebConfig cfg = dl.webConfig();
+    if (!cfg.valid) return Response::error("番茄下载器服务不可用", 503);
+
+    Json j;
+    j.beginObject();
+    j.key("ok").value(true);
+    j.key("format").value(cfg.novelFormat);
+    j.key("audiobook").value(cfg.enableAudiobook);
+    j.key("audiobookFormat").value(cfg.audiobookFormat);
+    j.key("bulkFiles").value(cfg.bulkFiles);
+    j.key("askFormat").value(cfg.askFormat);
+    j.endObject();
+    return okJson(j);
+}
+
 // 写入下载配置（格式 / 有声书 / 分章）
 Response handleFanqieConfigSet(const Request& req) {
     FanqieDownloader dl(2);
@@ -1103,14 +1121,20 @@ Response handleFanqieJobAction(const Request& req) {
 Response handleFanqieLibrary(const Request& req) {
     std::string path = queryStr(req, "path");
     std::string name = queryStr(req, "name");
-    bool startScan = queryStr(req, "start", "1") != "0";
+    // 默认只读缓存（扫描是异步的，发起的当次拿不到结果）；start=true/1 才触发重扫
+    std::string startRaw = queryStr(req, "start", "false");
+    bool startScan = (startRaw == "true" || startRaw == "1");
 
     FanqieDownloader dl(2);
-    auto items = dl.library(path, name, startScan);
+    bool running = false;
+    int scanned = 0;
+    auto items = dl.library(path, name, startScan, &running, &scanned);
 
     Json j;
     j.beginObject();
     j.key("path").value(path);
+    j.key("running").value(running);
+    j.key("scanned").value(scanned);
     j.key("count").value((int)items.size());
     j.key("items");
     j.beginArray();
@@ -1907,6 +1931,7 @@ void registerRoutes(Server& server) {
     server.route("GET", "/api/fanqie/search", handleFanqieSearch);
     server.route("POST", "/api/fanqie/download", handleFanqieDownload);
     server.route("GET", "/api/fanqie/status", handleFanqieStatus);
+    server.route("GET", "/api/fanqie/config", handleFanqieConfigGet);
     server.route("POST", "/api/fanqie/config", handleFanqieConfigSet);
     server.route("GET", "/api/fanqie/preview", handleFanqiePreview);
     server.route("GET", "/api/fanqie/cover", handleFanqieCover);

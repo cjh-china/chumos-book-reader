@@ -1290,7 +1290,6 @@ body.desktop .fq-bar{background:var(--shell-line)}
           <div class="chips" id="fqFormatChips">
             <button class="chip" data-fmt="txt">TXT</button>
             <button class="chip" data-fmt="epub">EPUB</button>
-            <button class="chip" data-fmt="pdf">PDF</button>
           </div>
         </div>
         <div class="set-row"><span class="lbl grow">同时生成有声书</span>
@@ -2418,6 +2417,7 @@ async function startFqJob(body,label){
   $('#jobBar').style.width='0%';
   $('#jobPhase').textContent='正在准备任务…';
   $('#jobTip').textContent='';
+  $('#jobTip').title='';
   $('#jobChoices').classList.add('hidden');
   $('#jobChoices').innerHTML='';
   $('#btnJobCancel').classList.remove('hidden');
@@ -2497,7 +2497,10 @@ async function finishFqJob(d){
   stopFqPoll();
   $('#btnJobCancel').classList.add('hidden');
   const body=(FQ.job&&FQ.job.body)||{};
+  const wantAudio=!!body.audiobook;
+  const bookName=body.name||d.title||'';
   $('#jobTip').textContent='正在取回文件…';
+  let tip='';
   try{
     let fmt=fqNormalizeFmt(body.format||'');
     if(!body.format){
@@ -2505,14 +2508,25 @@ async function finishFqJob(d){
     }
     const r=await post('/api/fanqie/import',{
       bookId:String(body.bookId||d.bookId||''),
-      name:body.name||d.title||'',
+      name:bookName,
       format:fmt});
-    $('#jobTip').textContent='已加入书架：'+fileName(r.path||'');
+    tip='已加入书架：'+fileName(r.path||'');
     toast('下载完成，已加入书架');
     await loadShelf();
   }catch(e){
-    $('#jobTip').textContent='文件已生成，但取回失败：'+e.message;
+    tip='文件已生成，但取回失败：'+e.message;
   }
+  // 有声书是「书名_audio/」下的分章 mp3，不进书架，直接告诉用户落在哪
+  if(wantAudio){
+    let dir='';
+    try{const st=await api('/api/fanqie/status');dir=st.saveDir||'';}catch(e){}
+    const folder=bookName+'_audio';
+    const fullPath=(dir?dir+'\\':'')+folder;
+    tip=(tip?tip+' · ':'')+'音频在 '+folder+'/';
+    $('#jobTip').title='完整路径：'+fullPath;
+    if(tip.indexOf('已加入书架')<0)toast('有声书已生成');
+  }
+  $('#jobTip').textContent=tip;
 }
 
 async function showBookDetail(item){
@@ -2548,7 +2562,13 @@ async function showBookDetail(item){
   const cover=el('div','detail-cover');
   if(d.cover){
     cover.classList.add('fq-cover');
-    cover.style.backgroundImage='url("'+d.cover+'")';
+    // 先铺一层按书名生成的渐变，真封面加载完再换上，避免中途留一块白
+    cover.style.backgroundImage=coverStyle(name);
+    const url=d.cover;
+    const probe=new Image();
+    probe.onload=()=>{cover.style.backgroundImage='url("'+url+'")';};
+    probe.onerror=()=>{cover.textContent=name.slice(0,8);};
+    probe.src=url;
   }else{
     cover.style.background=coverStyle(name);
     cover.textContent=name.slice(0,8);
@@ -2705,8 +2725,8 @@ async function loadFqHistory(){
       box.appendChild(el('div','upd-name',h.name||'未命名'));
       box.appendChild(el('div','upd-sub',(h.progress||'')+' · '+fqTime(h.time)));
       row.appendChild(box);
-      row.appendChild(el('span','detail-badge',
-        h.status==='success'?'完成':(h.status||'')));
+      const stMap={success:'完成',failed:'失败',cancelled:'已取消',running:'进行中'};
+      row.appendChild(el('span','detail-badge',stMap[h.status]||h.status||''));
       card.appendChild(row);
     });
   }catch(e){

@@ -99,10 +99,13 @@ so-novel sources: hot searches, search history, "continue reading" and
 recommendations, per-book details (intro, chapter count, word count, progress),
 "read now" and "add to shelf" (downloads into `downloads/`). Fanqie details show
 the real cover, chapter / word count, readers and the first & latest chapter; the
-download sheet lets you pick **TXT / EPUB / PDF**, optionally generate an
+download sheet lets you pick **TXT / EPUB**, optionally generate an
 **audiobook** (MP3 / WAV) and restrict the **chapter range**, then follows the job
 with a per-chapter progress bar and a cancel button before copying the produced
-file into `downloads/`. The shelf's **Check updates** action scans downloaded
+file into `downloads/`. Audiobooks are produced as `书名_audio/` with one MP3 per
+chapter, so the job panel reports that folder instead of adding it to the shelf.
+PDF is not offered: the downloader refuses to serve `.pdf` over HTTP (403) and the
+reader cannot render it yet. The shelf's **Check updates** action scans downloaded
 books for new chapters and can refresh them in one click. The **Me** tab shows
 reading statistics (today / total / streak / per-book time), bookshelf sorting and
 grid-list switch, hidden-book restore, and shortcuts to reader / library / TTS
