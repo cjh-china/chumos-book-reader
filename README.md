@@ -329,4 +329,10 @@ Created next to the executable:
 
 ## License
 
-GPL-3.0. The bundled Tomato-Novel-Downloader is a separate GPL-3.0 project.
+This project is released under the GNU General Public License v3.0 — see
+[LICENSE](LICENSE) for the full text.
+
+The bundled Tomato-Novel-Downloader is a separate GPL-3.0 project and keeps its
+own copyright. Release binaries link statically against libcurl (curl license),
+OpenSSL (Apache-2.0) and zlib (zlib license); the notices of those projects
+apply to their respective components.
